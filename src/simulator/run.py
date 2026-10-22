@@ -1,33 +1,49 @@
 """
-ตัวรันหลักของ simulator เฟส 3
-รัน: python -m src.simulator.run   (จาก root ของโปรเจกต์)
-สร้างข้อมูล 15 วัน แล้ว export CSV ลงโฟลเดอร์ data/
+ตัวรันหลักของ simulator
+รัน (จาก root ของโปรเจกต์):
+    python -m src.simulator.run                                   # ชุด dev: seed 42, 15 วัน -> data/
+    python -m src.simulator.run --seed 7 --days 30 --out data/test # ชุด test: ไว้วัดผลครั้งสุดท้าย
+
+ชุด dev ใช้ปรับ threshold ได้ ชุด test ห้ามดูระหว่างปรับ ใช้วัดผลรอบสุดท้ายเท่านั้น
 """
-import csv, os, sys
+import argparse
+import csv
+import os
+import sys
+
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(__file__))))
-from src.simulator.fleet import generate_all, build_drones
+from src.simulator.fleet import build_drones, generate_all
 
-OUT = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), "data")
 
-def write_csv(name, rows):
+def write_csv(out_dir, name, rows):
     if not rows:
-        print(f"  {name}: (ว่าง)"); return
-    with open(os.path.join(OUT, name), "w", newline="") as f:
-        w = csv.DictWriter(f, fieldnames=list(rows[0].keys())); w.writeheader()
+        print(f"  {name}: (ว่าง)")
+        return
+    with open(os.path.join(out_dir, name), "w", newline="") as f:
+        w = csv.DictWriter(f, fieldnames=list(rows[0].keys()))
+        w.writeheader()
         w.writerows(rows)
     print(f"  {name}: {len(rows)} แถว")
 
+
 def main():
-    os.makedirs(OUT, exist_ok=True)
-    telemetry, injected, missions, results = generate_all(num_days=15, seed=42)
+    ap = argparse.ArgumentParser(description="สร้างข้อมูลจำลองฝูงโดรน")
+    ap.add_argument("--days", type=int, default=15)
+    ap.add_argument("--seed", type=int, default=42)
+    ap.add_argument("--out", default="data")
+    args = ap.parse_args()
+
+    os.makedirs(args.out, exist_ok=True)
+    telemetry, injected, missions, results = generate_all(num_days=args.days, seed=args.seed)
     drones = build_drones()
-    print("=== สร้างข้อมูลเสร็จ ===")
+    print(f"=== สร้างข้อมูลเสร็จ (seed={args.seed}, {args.days} วัน) ===")
     print(f"  ภารกิจสำเร็จ {results['success']} | โดน anomaly {results['anomaly_missions']}")
-    print("=== export CSV → data/ ===")
-    write_csv("telemetry_logs.csv", telemetry)
-    write_csv("injected_anomalies.csv", injected)
-    write_csv("missions.csv", missions)
-    write_csv("drones.csv", drones)
+    print(f"=== export CSV → {args.out}/ ===")
+    write_csv(args.out, "telemetry_logs.csv", telemetry)
+    write_csv(args.out, "injected_anomalies.csv", injected)
+    write_csv(args.out, "missions.csv", missions)
+    write_csv(args.out, "drones.csv", drones)
+
 
 if __name__ == "__main__":
     main()

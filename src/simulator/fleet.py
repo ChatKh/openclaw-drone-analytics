@@ -27,7 +27,8 @@ def generate_all(num_days=15, base_date=datetime(2026,6,1), seed=42):
                 spec = plan_anomaly(rows, rng)
                 if spec:
                     aid += 1
-                    rec = apply_anomaly(rows, spec, aid, drone_id, mid)
+                    mag_rng = random.Random(f"{seed}:{mid}")  # magnitude only; same missions get hit
+                    rec = apply_anomaly(rows, spec, aid, drone_id, mid, mag_rng)
                     if rec: injected.append(rec); results["anomaly_missions"]+=1; has_anom=True
                 all_rows.extend(rows); results["success"]+=1
                 missions.append({"mission_id":mid,"drone_id":drone_id,"role":slot,

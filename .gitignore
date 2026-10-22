@@ -5,3 +5,4 @@ data/*.csv
 .pytest_cache/
 data/*.db
 data/*.db-*
+data/test/
