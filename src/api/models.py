@@ -43,6 +43,7 @@ class RejectedRow(BaseModel):
 
 
 class BatchResult(BaseModel):
-    received: int
-    accepted: int
-    rejected: list[RejectedRow]
+    received: int     # rows in the request
+    accepted: int     # rows newly stored
+    duplicates: int   # valid rows already stored (same drone_id + timestamp)
+    rejected: list[RejectedRow]  # invalid values or unknown references

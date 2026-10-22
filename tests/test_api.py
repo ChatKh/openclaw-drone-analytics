@@ -7,6 +7,8 @@ from src.simulator.fleet import generate_all
 
 client = TestClient(app)
 
+pytestmark = pytest.mark.usefixtures("seeded_db")
+
 
 def good_row(**overrides):
     row = {
@@ -38,7 +40,7 @@ def test_health():
 def test_good_batch_is_fully_accepted():
     r = post([good_row(), good_row(timestamp="2026-06-01 08:00:01")])
     assert r.status_code == 200
-    assert r.json() == {"received": 2, "accepted": 2, "rejected": []}
+    assert r.json() == {"received": 2, "accepted": 2, "duplicates": 0, "rejected": []}
 
 
 @pytest.mark.parametrize(
@@ -71,7 +73,7 @@ def test_missing_field_is_rejected():
 
 
 def test_one_bad_row_does_not_fail_the_batch():
-    rows = [good_row(), good_row(battery_vtol_pct=150), good_row(), "not a row"]
+    rows = [good_row(), good_row(battery_vtol_pct=150), good_row(timestamp="2026-06-01 08:00:01"), "not a row"]
     body = post(rows).json()
     assert body["received"] == 4
     assert body["accepted"] == 2
@@ -81,7 +83,7 @@ def test_one_bad_row_does_not_fail_the_batch():
 def test_injected_anomaly_values_are_still_valid_data():
     # Anomalies are detected in Phase 5, not filtered out at ingestion.
     spike = good_row(flight_mode="survey", altitude_m=45.0)
-    gps = good_row(flight_mode="survey", satellite_count=3, hdop=8.0)
+    gps = good_row(flight_mode="survey", satellite_count=3, hdop=8.0, timestamp="2026-06-01 08:00:01")
     assert post([spike, gps]).json()["accepted"] == 2
 
 
@@ -97,6 +99,6 @@ def test_simulator_output_matches_the_contract():
     # The schema is the contract: everything the simulator makes must pass.
     telemetry, _, _, _ = generate_all(num_days=2, seed=42)
     rows = [{**r, "timestamp": str(r["timestamp"])} for r in telemetry]
-    accepted, rejected = validate_batch(rows)
+    valid, rejected = validate_batch(rows)
     assert rejected == []
-    assert len(accepted) == len(telemetry)
+    assert len(valid) == len(telemetry)
