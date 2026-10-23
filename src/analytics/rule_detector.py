@@ -1,19 +1,32 @@
 """
-Rule-based detector (Phase 5, day 6): fixed thresholds on telemetry -> alerts.
+Rule-based detector v2 (Phase 5, day 9): rules that look at the SHAPE of a signal,
+not only its size, so normal disturbances (wind gusts, GPS multipath) are not
+mistaken for faults.
 
 Reads telemetry_logs and missions only. Writes rows to alerts with
 detector = 'rule'. Running it again replaces the previous rule alerts.
+This is post-flight analysis, so a rule may look a few minutes ahead.
 
-Rules (thresholds live in RuleConfig so day 9 can tune them):
-  battery  cruise battery falls more than battery_drop_pct within battery_window_s
-  gps      satellite_count < min_satellites or hdop > max_hdop, for at least gps_min_s
-  sensor   altitude changes more than max_alt_step_m between two readings
-  lipo     VTOL battery below min_vtol_return_pct when the return leg starts
+Rules (all thresholds in RuleConfig):
+  battery  the cruise battery level drops and STAYS down.
+           Gust sag only pushes the reading down for a while, so the highest
+           reading in a window ignores it. Compare the highest reading in a
+           window before with the highest reading in a window after; a drop
+           larger than normal drain + battery_drop_pct is a fault.
+  gps      satellite_count < min_satellites or hdop > max_hdop, held for at
+           least gps_min_s seconds (multipath under canopy lasts 5-25 s).
+  sensor   one altitude reading far from its neighbours, measured against how
+           much the neighbours themselves wobble (gusts make them wobble).
+  lipo     VTOL battery at the start of the return leg below
+           min_vtol_return_pct = landing cost (~40 %) + a reserve.
+
+v1 (fixed size thresholds) scored precision 78 % / recall 50 % on dev.
 
 Run:  python -m src.analytics.rule_detector     (uses DRONE_DB_PATH or data/drone.db)
 """
 import logging
 import sqlite3
+import statistics
 from collections import Counter
 from dataclasses import asdict, dataclass
 from datetime import datetime, timedelta
@@ -23,18 +36,28 @@ from src.db.database import connect, init_db
 log = logging.getLogger("rule_detector")
 
 TS = "%Y-%m-%d %H:%M:%S"
+CRUISE_DRAIN_PER_S = 0.0136  # normal cruise battery drain, % per second
+CRUISE_MODES = ("transit_out", "survey", "transit_back")
 
 
 @dataclass(frozen=True)
 class RuleConfig:
-    battery_drop_pct: float = 15.0
-    battery_window_s: int = 60
+    # battery: persistent drop beyond normal drain
+    battery_drop_pct: float = 5.0
+    battery_window_s: int = 180   # before / after windows; longer than the longest gust (120 s)
+    battery_gap_s: int = 60       # gap between each window and the moment checked
+    battery_step_s: int = 5       # check every N seconds (speed)
+    # gps: bad quality that lasts
     min_satellites: int = 6
-    max_hdop: float = 5.0
-    gps_min_s: int = 1
-    max_alt_step_m: float = 10.0
-    min_vtol_return_pct: float = 45.0
-    merge_gap_s: int = 5  # flagged readings closer than this become one alert
+    max_hdop: float = 2.5
+    gps_min_s: int = 45
+    # sensor: isolated altitude outlier
+    spike_score: float = 14.0     # distance from neighbours / their wobble
+    spike_min_m: float = 3.0      # and at least this many metres
+    # lipo: not enough VTOL battery to land with a reserve
+    min_vtol_return_pct: float = 52.0
+    # flagged readings closer than this become one alert
+    merge_gap_s: int = 5
 
 
 @dataclass
@@ -44,7 +67,7 @@ class Alert:
     anomaly_type: str
     start_time: str
     end_time: str
-    score: float  # size of the problem in the rule's own unit (%, satellites, m)
+    score: float  # size of the problem in the rule's own unit
 
 
 def _ts(s: str) -> datetime:
@@ -63,7 +86,41 @@ def _group(flags: list[tuple[str, float]], gap_s: int) -> list[tuple[str, str, f
     return runs
 
 
-def detect_mission(rows: list[sqlite3.Row], cfg: RuleConfig) -> list[Alert]:
+def _battery_flags(rows, cfg: RuleConfig) -> list[tuple[str, float]]:
+    c = [r["battery_cruise_pct"] for r in rows]
+    w, g = cfg.battery_window_s, cfg.battery_gap_s
+    expected = CRUISE_DRAIN_PER_S * (w + 2 * g)  # normal drain between the two window starts
+    flags = []
+    for i in range(w + g, len(c) - g - w, cfg.battery_step_s):
+        if rows[i]["flight_mode"] not in CRUISE_MODES:
+            continue
+        before = max(c[i - g - w:i - g])
+        after = max(c[i + g:i + g + w])
+        excess = (before - after) - expected
+        if excess > cfg.battery_drop_pct:
+            flags.append((rows[i]["timestamp"], excess))
+    return flags
+
+
+def _sensor_flags(rows, cfg: RuleConfig) -> list[tuple[str, float]]:
+    a = [r["altitude_m"] for r in rows]
+    flags = []
+    for i in range(10, len(a) - 10):
+        if rows[i]["flight_mode"] not in CRUISE_MODES:
+            continue
+        near = a[i - 3:i] + a[i + 1:i + 4]
+        dev = abs(a[i] - statistics.median(near))
+        if dev < cfg.spike_min_m:
+            continue
+        around = a[i - 10:i] + a[i + 1:i + 11]
+        mid = statistics.median(around)
+        wobble = max(statistics.median([abs(x - mid) for x in around]), 0.3)
+        if dev / wobble > cfg.spike_score:
+            flags.append((rows[i]["timestamp"], dev))
+    return flags
+
+
+def detect_mission(rows, cfg: RuleConfig) -> list[Alert]:
     """Apply all four rules to one flight mission (rows ordered by time, 1 Hz)."""
     if not rows:
         return []
@@ -75,29 +132,14 @@ def detect_mission(rows: list[sqlite3.Row], cfg: RuleConfig) -> list[Alert]:
             if (_ts(end) - _ts(start)).total_seconds() + 1 >= min_len_s:
                 alerts.append(Alert(drone, mission, kind, start, end, round(score, 2)))
 
-    # battery: compare with the reading battery_window_s seconds earlier
-    w = cfg.battery_window_s
-    add("battery", [
-        (rows[i]["timestamp"], rows[i - w]["battery_cruise_pct"] - rows[i]["battery_cruise_pct"])
-        for i in range(w, len(rows))
-        if rows[i - w]["battery_cruise_pct"] - rows[i]["battery_cruise_pct"] > cfg.battery_drop_pct
-    ])
-
-    # gps: bad quality held for at least gps_min_s seconds
+    add("battery", _battery_flags(rows, cfg))
     add("gps", [
-        (r["timestamp"], float(cfg.min_satellites - r["satellite_count"]))
+        (r["timestamp"], float(max(cfg.min_satellites - r["satellite_count"], r["hdop"] - cfg.max_hdop)))
         for r in rows
         if r["satellite_count"] < cfg.min_satellites or r["hdop"] > cfg.max_hdop
     ], min_len_s=cfg.gps_min_s)
+    add("sensor", _sensor_flags(rows, cfg))
 
-    # sensor: altitude jump between two readings
-    add("sensor", [
-        (rows[i]["timestamp"], abs(rows[i]["altitude_m"] - rows[i - 1]["altitude_m"]))
-        for i in range(1, len(rows))
-        if abs(rows[i]["altitude_m"] - rows[i - 1]["altitude_m"]) > cfg.max_alt_step_m
-    ])
-
-    # lipo: VTOL level at the first reading of the return leg
     back = next((r for r in rows if r["flight_mode"] == "transit_back"), None)
     if back is not None and back["battery_vtol_pct"] < cfg.min_vtol_return_pct:
         alerts.append(Alert(drone, mission, "lipo", back["timestamp"], rows[-1]["timestamp"],
