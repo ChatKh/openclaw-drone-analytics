@@ -1,0 +1,54 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 640 360" width="640" height="360" role="img" aria-labelledby="t d" font-family="system-ui, -apple-system, Segoe UI, sans-serif">
+<title id="t">Rule vs ML: recall by fault type</title>
+<desc id="d">rule v2: battery 100%, gps 100%, sensor 100%, lipo 100%, all 100%; ml envelope: battery 100%, gps 100%, sensor 67%, lipo 100%, all 94%</desc>
+<style>
+  .bg{fill:#fcfcfb} .ink{fill:#0b0b0b} .ink2{fill:#52514e} .grid{stroke:#e4e3df} .base{stroke:#8a8984}
+  .s1{fill:#2a78d6} .s2{fill:#eb6834}
+  @media (prefers-color-scheme: dark){
+    .bg{fill:#1a1a19} .ink{fill:#f0efec} .ink2{fill:#c3c2b7} .grid{stroke:#33332f} .base{stroke:#6d6c66}
+    .s1{fill:#3987e5} .s2{fill:#d95926}
+  }
+</style>
+<rect class="bg" width="640" height="360" rx="8"/>
+<text class="ink" x="48" y="26" font-size="15" font-weight="600">Rule vs ML: recall by fault type</text>
+<rect class="s1" x="48" y="50" width="12" height="12" rx="2"/>
+<text class="ink2" x="66" y="60" font-size="12"><tspan class="ink" font-weight="600">rule v2</tspan><tspan dx="6">precision 94%, 1 false alarm</tspan></text>
+<rect class="s2" x="48" y="68" width="12" height="12" rx="2"/>
+<text class="ink2" x="66" y="78" font-size="12"><tspan class="ink" font-weight="600">ml envelope</tspan><tspan dx="6">precision 100%, 0 false alarms</tspan></text>
+<line class="base" x1="48" x2="624" y1="316.0" y2="316.0" stroke-width="1"/>
+<text class="ink2" x="40" y="320.0" font-size="11" text-anchor="end">0%</text>
+<line class="grid" x1="48" x2="624" y1="265.0" y2="265.0" stroke-width="1"/>
+<text class="ink2" x="40" y="269.0" font-size="11" text-anchor="end">25%</text>
+<line class="grid" x1="48" x2="624" y1="214.0" y2="214.0" stroke-width="1"/>
+<text class="ink2" x="40" y="218.0" font-size="11" text-anchor="end">50%</text>
+<line class="grid" x1="48" x2="624" y1="163.0" y2="163.0" stroke-width="1"/>
+<text class="ink2" x="40" y="167.0" font-size="11" text-anchor="end">75%</text>
+<line class="grid" x1="48" x2="624" y1="112.0" y2="112.0" stroke-width="1"/>
+<text class="ink2" x="40" y="116.0" font-size="11" text-anchor="end">100%</text>
+<path class="s1" d="M74.6,316.0 V116.0 Q74.6,112.0 78.6,112.0 H100.6 Q104.6,112.0 104.6,116.0 V316.0 Z"/>
+<text class="ink" x="89.6" y="107.0" font-size="10" text-anchor="middle">100%</text>
+<path class="s2" d="M106.6,316.0 V116.0 Q106.6,112.0 110.6,112.0 H132.6 Q136.6,112.0 136.6,116.0 V316.0 Z"/>
+<text class="ink" x="121.6" y="107.0" font-size="10" text-anchor="middle">100%</text>
+<text class="ink2" x="105.6" y="334.0" font-size="12" text-anchor="middle">battery</text>
+<path class="s1" d="M189.8,316.0 V116.0 Q189.8,112.0 193.8,112.0 H215.8 Q219.8,112.0 219.8,116.0 V316.0 Z"/>
+<text class="ink" x="204.8" y="107.0" font-size="10" text-anchor="middle">100%</text>
+<path class="s2" d="M221.8,316.0 V116.0 Q221.8,112.0 225.8,112.0 H247.8 Q251.8,112.0 251.8,116.0 V316.0 Z"/>
+<text class="ink" x="236.8" y="107.0" font-size="10" text-anchor="middle">100%</text>
+<text class="ink2" x="220.8" y="334.0" font-size="12" text-anchor="middle">gps</text>
+<path class="s1" d="M305.0,316.0 V116.0 Q305.0,112.0 309.0,112.0 H331.0 Q335.0,112.0 335.0,116.0 V316.0 Z"/>
+<text class="ink" x="320.0" y="107.0" font-size="10" text-anchor="middle">100%</text>
+<path class="s2" d="M337.0,316.0 V184.0 Q337.0,180.0 341.0,180.0 H363.0 Q367.0,180.0 367.0,184.0 V316.0 Z"/>
+<text class="ink" x="352.0" y="175.0" font-size="10" text-anchor="middle">67%</text>
+<text class="ink2" x="336.0" y="334.0" font-size="12" text-anchor="middle">sensor</text>
+<path class="s1" d="M420.2,316.0 V116.0 Q420.2,112.0 424.2,112.0 H446.2 Q450.2,112.0 450.2,116.0 V316.0 Z"/>
+<text class="ink" x="435.2" y="107.0" font-size="10" text-anchor="middle">100%</text>
+<path class="s2" d="M452.2,316.0 V116.0 Q452.2,112.0 456.2,112.0 H478.2 Q482.2,112.0 482.2,116.0 V316.0 Z"/>
+<text class="ink" x="467.2" y="107.0" font-size="10" text-anchor="middle">100%</text>
+<text class="ink2" x="451.2" y="334.0" font-size="12" text-anchor="middle">lipo</text>
+<path class="s1" d="M535.4,316.0 V116.0 Q535.4,112.0 539.4,112.0 H561.4 Q565.4,112.0 565.4,116.0 V316.0 Z"/>
+<text class="ink" x="550.4" y="107.0" font-size="10" text-anchor="middle">100%</text>
+<path class="s2" d="M567.4,316.0 V128.8 Q567.4,124.8 571.4,124.8 H593.4 Q597.4,124.8 597.4,128.8 V316.0 Z"/>
+<text class="ink" x="582.4" y="119.8" font-size="10" text-anchor="middle">94%</text>
+<text class="ink2" x="566.4" y="334.0" font-size="12" text-anchor="middle" font-weight="600">all</text>
+<text class="ink2" x="48" y="352" font-size="11">Recall = share of injected faults caught (same mission, same type, time within ±30 s)</text>
+</svg>

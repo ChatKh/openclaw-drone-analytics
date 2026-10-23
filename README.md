@@ -10,7 +10,7 @@
 |---|---|---|
 | 3 | Simulator + ฉีด anomaly 4 แบบ | เสร็จ |
 | 4 | Ingestion API (FastAPI + Pydantic) + SQLite | เสร็จ |
-| 5 | Analytics: rule-based + ML (Isolation Forest) + precision/recall | ถัดไป |
+| 5 | Analytics: rule-based + ML (Isolation Forest + envelope) + precision/recall | เสร็จ |
 | 6–9 | Dashboard, OpenClaw agent (read-only), Docker + CI, writeup | วางแผน |
 
 ## โครงสร้าง
@@ -26,11 +26,21 @@ openclaw-drone-analytics/
 │   │   ├── schema.sql           # 5 ตาราง (drones, missions, telemetry_logs, injected_anomalies, alerts)
 │   │   ├── database.py          # เชื่อมต่อ + เปิด foreign keys ทุกครั้ง
 │   │   └── repository.py        # เขียน telemetry: ตรวจ mission + นับข้อมูลซ้ำ
-│   └── ingest/              # เฟส 4: สคริปต์โหลดข้อมูล
-│       ├── load_reference.py    # drones + missions
-│       ├── load_ground_truth.py # เฉลย (แยกจาก API โดยตั้งใจ)
-│       └── send_telemetry.py    # ส่ง CSV ผ่าน API เป็นชุด
-├── tests/                   # pytest: API, ฐานข้อมูล, end-to-end
+│   ├── ingest/              # เฟส 4: สคริปต์โหลดข้อมูล
+│   │   ├── load_reference.py    # drones + missions
+│   │   ├── load_ground_truth.py # เฉลย (แยกจาก API โดยตั้งใจ)
+│   │   └── send_telemetry.py    # ส่ง CSV ผ่าน API เป็นชุด
+│   ├── analytics/           # เฟส 5: ตัวตรวจจับ (ห้ามอ่านเฉลย มี test คุม)
+│   │   ├── fleet_health.py      # สรุปสุขภาพฝูง (SQL window functions)
+│   │   ├── rule_detector.py     # กฎที่ดูรูปร่างสัญญาณ
+│   │   └── ml_detector.py       # เรียนจากเที่ยวบินปกติ: Isolation Forest + envelope
+│   └── evaluation/          # เฟส 5: ส่วนเดียวที่อ่านเฉลยได้
+│       ├── evaluator.py         # precision / recall / false alarm ต่อชั่วโมง
+│       ├── sweep.py             # กวาด threshold บนชุด dev
+│       └── compare.py           # rule vs ML บนข้อมูลชุดเดียวกัน + กราฟ SVG
+├── tests/                   # pytest: API, ฐานข้อมูล, simulator, ตัวตรวจจับ, evaluator
+├── docs/                    # กราฟผลลัพธ์ (SVG)
+├── models/                  # โมเดลที่ฝึกแล้ว (สร้างตอนรัน ไม่เข้า git)
 └── data/                    # CSV + drone.db (สร้างตอนรัน ไม่เข้า git)
 ```
 
@@ -73,6 +83,37 @@ python -m src.ingest.send_telemetry
 หน้าทดลอง API: http://127.0.0.1:8000/docs
 ฐานข้อมูลอยู่ที่ `data/drone.db` (เปลี่ยนได้ด้วยตัวแปร `DRONE_DB_PATH`)
 
+## ตรวจจับและวัดผล (เฟส 5)
+
+```bash
+python -m src.analytics.rule_detector                 # เขียน alerts (detector='rule')
+python -m src.analytics.ml_detector train             # ฝึกบนเที่ยวบินปกติ 100 เที่ยว + ตั้ง threshold บนอีก 100 เที่ยว (~40 s)
+python -m src.analytics.ml_detector detect            # เขียน alerts (detector='ml')
+python -m src.evaluation.evaluator --detector rule    # เทียบกับเฉลย
+python -m src.evaluation.compare --svg docs/rule_vs_ml.svg   # rule vs ML ทุกโหมด
+```
+
+## ผลลัพธ์บนชุด test (seed 7, 30 วัน, 16 anomalies, 90 ชั่วโมงบิน)
+
+ทุกค่าตั้งถูกเลือกบนชุด dev หรือบนเที่ยวบินปกติก่อน แล้ววัดบนชุด test ครั้งเดียว
+
+![Rule vs ML recall by fault type](docs/rule_vs_ml.svg)
+
+| ตัวตรวจจับ | precision | recall | false alarm | ต่อชั่วโมงบิน |
+|---|---|---|---|---|
+| rule v2 | 94% | 100% | 1 (ลมแรงสุด) | 0.01 |
+| ML: Isolation Forest อย่างเดียว | 0% | 0% | 4 | 0.04 |
+| ML: envelope (ค่าเริ่มต้น) | 100% | 94% | 0 | 0.00 |
+| ML: hybrid (forest + envelope) | 79% | 94% | 4 | 0.04 |
+
+สิ่งที่เรียนรู้
+- **Isolation Forest อย่างเดียวจับไม่ได้เลย** คะแนนของมันอิ่มตัวเมื่อค่าหลุดช่วงที่เคยเห็น:
+  altitude spike 23 m ได้คะแนน 0.60 ขณะที่หน้าต่างลมกระโชกปกติได้ 0.75+ จึงเพิ่ม envelope
+  (ช่วงปกติของแต่ละ feature ที่เรียนจากเที่ยวบินปกติ) ซึ่งวัดได้ว่า "หลุดไกลแค่ไหน"
+- **rule กับ ML พลาดคนละที่** rule จับ spike เล็กได้ (ML พลาด spike 25.6 m) แต่ ML ไม่เตือนผิดในลมแรงสุด
+  การรวมสองตัวต้องทดสอบบนข้อมูลชุดใหม่ ไม่ใช่ปรับบนชุด test นี้
+- ตัวเลขมาจากข้อมูลจำลอง 16 anomalies: ความต่าง 1 ตัวคือ 6% จึงบอกทิศทาง ไม่ใช่ความแม่นยำจริงในสนาม
+
 ## หลักการออกแบบที่สำคัญ
 
 - **schema คือสัญญา** แหล่งข้อมูลเปลี่ยนได้ (simulator วันนี้, ArduPilot SITL ทีหลัง) โดย pipeline ไม่ต้องแก้
@@ -81,4 +122,5 @@ python -m src.ingest.send_telemetry
 - **ข้อสอบมีทั้งง่ายและก้ำกึ่ง** ความแรงของ anomaly ถูกสุ่มให้คร่อม threshold ตรวจจับ บางตัวจึงจับยากโดยตั้งใจ ค่าที่ฉีดจริงถูกบันทึกใน `params`
 - **มีสภาพรบกวนที่ปกติแต่ดูผิดปกติ** ลมกระโชก (~35% ของเที่ยวบิน: ความสูงแกว่ง, แบตวูบชั่วคราวแล้วกลับ, VTOL หมดเร็วขึ้น) และ GPS multipath ใต้ทรงพุ่ม (~30%: hdop สูงขึ้นช่วงสั้นๆ) ไม่อยู่ในเฉลย ตัวตรวจจับที่ดีต้องไม่เตือนเพราะสิ่งเหล่านี้ บันทึกไว้ใน `conditions.csv` เพื่อวิเคราะห์ผลเท่านั้น
 - **ปรับบนชุด dev วัดผลบนชุด test** ชุด test (seed อื่น) ไม่ถูกดูระหว่างปรับ threshold เพื่อไม่ให้ตัวเลขดีเกินจริง
+- **ML เรียนจากเที่ยวบินปกติเท่านั้น** ไม่เคยเห็น fault และ threshold ตั้งจากเที่ยวบินปกติอีกชุด (ยอมให้เตือนผิด ≤1% ของเที่ยวบิน) ไม่ได้ใช้เฉลย
 - **ตัวตรวจจับมองไม่เห็นเฉลย** เฉลยโหลดด้วยสคริปต์แยก และตาราง missions ไม่มีคอลัมน์ที่บอกว่าภารกิจไหนโดนฉีด
