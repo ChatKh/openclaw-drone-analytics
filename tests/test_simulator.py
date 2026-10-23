@@ -75,3 +75,42 @@ def test_low_lipo_runs_out_before_touchdown():
     assert p["vtol_at_touchdown"] == 0.0 < normal_end
     landing = [r["battery_vtol_pct"] for r in rows if r["flight_mode"] == "landing"]
     assert landing[0] > landing[-1]  # still drains during landing, not a flat line
+
+
+# ---------- normal disturbances (weather) ----------
+
+from src.simulator.disturbance import apply_weather  # noqa: E402
+
+
+class AlwaysWindy(random.Random):
+    """First draw decides wind (0.0 < 0.35 -> windy), second decides multipath (0.99 -> none)."""
+
+    def __init__(self):
+        super().__init__(3)
+        self.calls = 0
+
+    def random(self):
+        self.calls += 1
+        return 0.0 if self.calls == 1 else 0.99
+
+
+def test_weather_does_not_change_which_missions_get_anomalies(dev_set):
+    # dev_set is built with weather; the answer key must match the agreed 14 missions
+    hit = [r["mission_id"] for r in dev_set[1]]
+    assert hit[:3] == ["D0001_B_PM", "D0002_B_AM", "D0003_C_AM"] and len(hit) == 14
+
+
+def test_weather_is_recorded_but_not_in_the_answer_key(dev_set):
+    conditions = dev_set[3]["conditions"]
+    assert len(conditions) == 30 and any(c["windy"] for c in conditions)
+    assert all("wind" not in r["anomaly_type"] for r in dev_set[1])
+
+
+def test_gust_sag_recovers_but_takeoff_in_wind_costs_vtol():
+    calm, windy = mission(), mission()
+    cond = apply_weather(windy, AlwaysWindy())
+    assert cond["windy"] and cond["gust_episodes"] >= 2
+    back = next(i for i, r in enumerate(calm) if r["flight_mode"] == "transit_back")
+    assert windy[back]["battery_vtol_pct"] < calm[back]["battery_vtol_pct"]
+    # at touchdown the cruise battery differs only by the extra drain, not by a stuck sag
+    assert 0 < calm[-1]["battery_cruise_pct"] - windy[-1]["battery_cruise_pct"] < 5

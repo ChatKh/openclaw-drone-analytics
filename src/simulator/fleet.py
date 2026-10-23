@@ -2,6 +2,7 @@ from datetime import datetime, timedelta
 import random
 from src.simulator.simulator import generate_mission, generate_idle, get_daily_roles, DRONES
 from src.simulator.anomaly_orchestrate import plan_anomaly, apply_anomaly
+from src.simulator.disturbance import apply_weather
 
 def build_drones():
     """ตาราง dimension: drones (นิ่ง อ้างอิง)"""
@@ -12,7 +13,7 @@ def build_drones():
 def generate_all(num_days=15, base_date=datetime(2026,6,1), seed=42):
     rng = random.Random(seed); random.seed(seed)
     all_rows, injected, missions = [], [], []
-    results = {"success":0,"failed":0,"anomaly_missions":0,"errors":[]}
+    results = {"success":0,"failed":0,"anomaly_missions":0,"errors":[],"conditions":[]}
     aid = 0
     for day in range(num_days):
         day_num = day+1
@@ -23,6 +24,9 @@ def generate_all(num_days=15, base_date=datetime(2026,6,1), seed=42):
             mid = f"D{day_num:04d}_{drone_id}_{slot}"
             try:
                 rows = generate_mission(drone_id, mid, start)
+                # normal disturbances first (not faults, not in the answer key)
+                cond = apply_weather(rows, random.Random(f"{seed}:{mid}:wx"))
+                results["conditions"].append({"mission_id": mid, **cond})
                 has_anom = False
                 spec = plan_anomaly(rows, rng)
                 if spec:

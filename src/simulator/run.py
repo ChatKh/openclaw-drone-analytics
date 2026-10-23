@@ -43,6 +43,8 @@ def main():
     write_csv(args.out, "injected_anomalies.csv", injected)
     write_csv(args.out, "missions.csv", missions)
     write_csv(args.out, "drones.csv", drones)
+    # weather per flight: for analysis only, never loaded for detectors
+    write_csv(args.out, "conditions.csv", results["conditions"])
 
 
 if __name__ == "__main__":
