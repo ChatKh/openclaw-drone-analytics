@@ -11,7 +11,8 @@
 | 3 | Simulator + ฉีด anomaly 4 แบบ | เสร็จ |
 | 4 | Ingestion API (FastAPI + Pydantic) + SQLite | เสร็จ |
 | 5 | Analytics: rule-based + ML (Isolation Forest + envelope) + precision/recall | เสร็จ |
-| 6–9 | Dashboard, OpenClaw agent (read-only), Docker + CI, writeup | วางแผน |
+| 6 | Dashboard (Streamlit, read-only) | เสร็จ |
+| 7–9 | OpenClaw agent (read-only), Docker + CI, writeup | วางแผน |
 
 ## โครงสร้าง
 
@@ -34,6 +35,10 @@ openclaw-drone-analytics/
 │   │   ├── fleet_health.py      # สรุปสุขภาพฝูง (SQL window functions)
 │   │   ├── rule_detector.py     # กฎที่ดูรูปร่างสัญญาณ
 │   │   └── ml_detector.py       # เรียนจากเที่ยวบินปกติ: Isolation Forest + envelope
+│   ├── dashboard/           # เฟส 6: Streamlit อ่านอย่างเดียว
+│   │   ├── queries.py           # SQL รวมข้อมูลก่อนส่งให้หน้าเว็บ
+│   │   ├── views.py             # 5 หน้า: overview, missions, alerts, energy, evaluation
+│   │   └── app.py               # จุดเริ่ม: streamlit run src/dashboard/app.py
 │   └── evaluation/          # เฟส 5: ส่วนเดียวที่อ่านเฉลยได้
 │       ├── evaluator.py         # precision / recall / false alarm ต่อชั่วโมง
 │       ├── sweep.py             # กวาด threshold บนชุด dev
@@ -92,6 +97,26 @@ python -m src.analytics.ml_detector detect            # เขียน alerts (
 python -m src.evaluation.evaluator --detector rule    # เทียบกับเฉลย
 python -m src.evaluation.compare --svg docs/rule_vs_ml.svg   # rule vs ML ทุกโหมด
 ```
+
+## Dashboard (เฟส 6)
+
+```bash
+streamlit run src/dashboard/app.py      # เปิด http://localhost:8501
+```
+
+| หน้า | แสดงอะไร |
+|---|---|
+| Overview | จำนวนเที่ยวบิน ชั่วโมงบิน สุขภาพต่อลำ และ alert ต่อลำแยกตาม detector |
+| Missions | telemetry ของแต่ละเที่ยว (ความสูง แบต hdop) พร้อมแถบ alert ของ rule และ ML ซ้อนกัน |
+| Alerts | alert ทั้งหมด กรองได้ และบอกว่า detector อีกตัวเห็นด้วยไหม (ไม่ใช้เฉลย) |
+| Energy | แบตที่ใช้ต่อช่วงบิน: VTOL ใช้ ~80% ในเวลาแค่ 2 นาที (ขึ้นและลง) |
+| Evaluation | precision / recall ต่อ detector (หน้าเดียวที่อ่านเฉลย และบอกไว้บนหน้า) |
+
+- **อ่านอย่างเดียว** เปิด SQLite แบบ `mode=ro` ถ้าโค้ดผิดก็เขียนทับข้อมูลไม่ได้ (มี test คุม)
+- **รวมข้อมูลใน SQL ก่อนแสดง** 163k แถวไม่ถูกส่งไปที่ browser กราฟหนึ่งเที่ยวใช้ 540 จุด (จุดละ 10 วินาที)
+  ความสูงใช้ค่า MAX ของแต่ละช่วง spike 1 วินาทีจึงยังเห็นในกราฟ
+- **ไม่มีข้อมูลก็ไม่ crash** ไม่มีไฟล์ฐานข้อมูล หรือยังไม่มี telemetry จะขึ้นวิธีสร้างข้อมูลแทน
+- เลือกชุด dev หรือ test ได้ที่แถบซ้าย
 
 ## ผลลัพธ์บนชุด test (seed 7, 30 วัน, 16 anomalies, 90 ชั่วโมงบิน)
 
