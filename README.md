@@ -12,7 +12,8 @@
 | 4 | Ingestion API (FastAPI + Pydantic) + SQLite | เสร็จ |
 | 5 | Analytics: rule-based + ML (Isolation Forest + envelope) + precision/recall | เสร็จ |
 | 6 | Dashboard (Streamlit, read-only) | เสร็จ |
-| 7–9 | OpenClaw agent (read-only), Docker + CI, writeup | วางแผน |
+| 7 | OpenClaw agent (read-only): `fleet` CLI + guardrails เสร็จ, ต่อ OpenClaw | กำลังทำ |
+| 8–9 | Docker + CI, writeup | วางแผน |
 
 ## โครงสร้าง
 
@@ -35,6 +36,8 @@ openclaw-drone-analytics/
 │   │   ├── fleet_health.py      # สรุปสุขภาพฝูง (SQL window functions)
 │   │   ├── rule_detector.py     # กฎที่ดูรูปร่างสัญญาณ
 │   │   └── ml_detector.py       # เรียนจากเที่ยวบินปกติ: Isolation Forest + envelope
+│   ├── agent/               # เฟส 7: ประตูเดียวที่ AI agent เข้าถึงข้อมูล
+│   │   └── fleet.py             # CLI อ่านอย่างเดียว ตอบเป็น JSON + guardrails
 │   ├── dashboard/           # เฟส 6: Streamlit อ่านอย่างเดียว
 │   │   ├── queries.py           # SQL รวมข้อมูลก่อนส่งให้หน้าเว็บ
 │   │   ├── views.py             # 5 หน้า: overview, missions, alerts, energy, evaluation
@@ -43,6 +46,8 @@ openclaw-drone-analytics/
 │       ├── evaluator.py         # precision / recall / false alarm ต่อชั่วโมง
 │       ├── sweep.py             # กวาด threshold บนชุด dev
 │       └── compare.py           # rule vs ML บนข้อมูลชุดเดียวกัน + กราฟ SVG
+├── bin/fleet                # wrapper: คำสั่งเดียวที่ OpenClaw ได้รับอนุญาตให้รัน
+├── openclaw/skills/fleet-analytics/SKILL.md   # สอน agent ว่าใช้ fleet ยังไง
 ├── tests/                   # pytest: API, ฐานข้อมูล, simulator, ตัวตรวจจับ, evaluator
 ├── docs/                    # กราฟผลลัพธ์ (SVG)
 ├── models/                  # โมเดลที่ฝึกแล้ว (สร้างตอนรัน ไม่เข้า git)
@@ -117,6 +122,28 @@ streamlit run src/dashboard/app.py      # เปิด http://localhost:8501
   ความสูงใช้ค่า MAX ของแต่ละช่วง spike 1 วินาทีจึงยังเห็นในกราฟ
 - **ไม่มีข้อมูลก็ไม่ crash** ไม่มีไฟล์ฐานข้อมูล หรือยังไม่มี telemetry จะขึ้นวิธีสร้างข้อมูลแทน
 - เลือกชุด dev หรือ test ได้ที่แถบซ้าย
+
+## AI agent (เฟส 7)
+
+agent (OpenClaw) ไม่ได้ shell เข้าไปที่ข้อมูล มันรันได้โปรแกรมเดียวคือ `bin/fleet` ซึ่งตอบเป็น JSON
+
+```bash
+bin/fleet --pretty summary
+bin/fleet alerts --disagree                 # alert ที่ rule กับ ML เห็นไม่ตรงกัน
+bin/fleet sql "SELECT drone_id, count(*) FROM alerts GROUP BY 1"
+```
+
+guardrails อยู่ในโค้ดที่มีเทสต์ ไม่ได้ฝากไว้กับ LLM หรือ config ของ agent:
+
+| ชั้น | กันอะไร |
+|---|---|
+| เปิด SQLite แบบ `mode=ro` | เขียนไฟล์ฐานข้อมูลไม่ได้เลย |
+| SQLite authorizer | อนุญาตแค่ SELECT: INSERT/UPDATE/DELETE/DROP/ATTACH/PRAGMA/load_extension ถูกปฏิเสธ |
+| ตรวจแผนการรัน (EXPLAIN) | ซ่อนเฉลย `injected_anomalies` ระดับตาราง (authorizer ตรวจแค่คอลัมน์ `count(*)` จึงหลุดได้ ถ้าไม่มีชั้นนี้) |
+| จำกัดงาน | ไม่เกิน 50 แถว และ 2 วินาทีต่อคำสั่ง |
+| audit log | ทุกคำสั่งบันทึกใน `logs/agent_queries.jsonl` |
+
+ชั้นที่ OpenClaw: skill ใน `openclaw/skills/fleet-analytics/` และอนุญาตให้ exec รันได้แค่ `bin/fleet`
 
 ## ผลลัพธ์บนชุด test (seed 7, 30 วัน, 16 anomalies, 90 ชั่วโมงบิน)
 
