@@ -1,0 +1,24 @@
+{
+ "_note": "Flight phase of the leg flown TOWARD each waypoint (MISSION_CURRENT.seq). Mission: sitl/survey_long.waypoints (8 survey lines of 1000 m, 200 m apart, 40 m above home; ~12 km, ~11 min armed). Long enough for the battery rule, which needs 2 x (180 + 60) s of data.",
+ "toward_waypoint": {
+  "1": "takeoff",
+  "2": "transit_out",
+  "3": "survey",
+  "4": "survey",
+  "5": "survey",
+  "6": "survey",
+  "7": "survey",
+  "8": "survey",
+  "9": "survey",
+  "10": "survey",
+  "11": "survey",
+  "12": "survey",
+  "13": "survey",
+  "14": "survey",
+  "15": "survey",
+  "16": "survey",
+  "17": "survey",
+  "18": "transit_back",
+  "19": "landing"
+ }
+}

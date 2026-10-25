@@ -24,10 +24,14 @@ def seq_at(s: int) -> int:
     return [q for start, q in SEQ_BY_SECOND if s >= start][-1]
 
 
-def write_tlog(path: Path, battery_monitor: bool = True) -> None:
+TRANSITION_AT = 25  # waypoint 2 is current from 21 s; forward flight from 25 s
+
+
+def write_tlog(path: Path, battery_monitor: bool = True, transition_at: int | None = TRANSITION_AT) -> None:
     """130 s: disarmed 0-4 s, armed 5-125 s, disarmed after. Gaps at 60-62 s (short) and 100-109 s (long).
 
-    battery_monitor=False: SYS_STATUS as ArduPilot sends it with BATT_MONITOR 0 (remaining -1, 0 V)."""
+    battery_monitor=False: SYS_STATUS as ArduPilot sends it with BATT_MONITOR 0 (remaining -1, 0 V).
+    transition_at: second of the vehicle's "Transition done" (None: no such message)."""
     from pymavlink.dialects.v20 import ardupilotmega as mav
 
     vehicle, gcs = mav.MAVLink(None, srcSystem=1, srcComponent=1), mav.MAVLink(None, srcSystem=255, srcComponent=190)
@@ -54,6 +58,10 @@ def write_tlog(path: Path, battery_monitor: bool = True) -> None:
                                                          0, 0, 0, 0, 0, 0))
         if armed:
             put(t + 0.50, vehicle, vehicle.mission_current_encode(seq_at(s)))
+        if s == 22:
+            put(t + 0.60, gcs, gcs.statustext_encode(6, b"Transition done"))      # not the vehicle
+        if s == transition_at:
+            put(t + 0.60, vehicle, vehicle.statustext_encode(6, b"Transition done"))
     path.write_bytes(bytes(out))
 
 
@@ -91,6 +99,25 @@ def test_phases_follow_the_waypoint_being_flown_to(rows):
         if not order or order[-1] != r["flight_mode"]:
             order.append(r["flight_mode"])
     assert order == ["takeoff", "transit_out", "survey", "transit_back", "landing"]
+
+
+def second_of(row) -> int:
+    return int(datetime.strptime(row["timestamp"], E.TS).replace(tzinfo=timezone.utc).timestamp()) - T0
+
+
+def test_transition_counts_as_takeoff_until_the_vehicle_says_done(rows):
+    first_cruise = next(r for r in rows if r["flight_mode"] == "transit_out")
+    assert second_of(first_cruise) == TRANSITION_AT          # not 21 (waypoint 2), not 22 (GCS text)
+    assert all(r["flight_mode"] == "takeoff" for r in rows if second_of(r) < TRANSITION_AT)
+
+
+def test_without_transition_messages_phases_follow_the_waypoints(tmp_path, caplog):
+    path = tmp_path / "no_transition.tlog"
+    write_tlog(path, transition_at=None)
+    # the GCS text at 22 s is dropped by extract, so this log has no transition message at all
+    rows = E.transform(E.extract(path), E.load_phases(ROOT / "sitl" / "mission_phases.json"), "D0001_S_AM")
+    assert second_of(next(r for r in rows if r["flight_mode"] == "transit_out")) == 21
+    assert "no 'Transition done'" in caplog.text
 
 
 def test_values_fit_the_contract(rows):
@@ -147,15 +174,52 @@ def test_parameter_file_turns_the_battery_monitor_on():
     assert params["BATT_MONITOR"] == "4" and int(params["BATT_CAPACITY"]) > 0
 
 
-REAL_FLIGHTS =sorted((ROOT / "sitl" / "flights").glob("*.tlog")) if (ROOT / "sitl" / "flights").exists() else []
+MISSIONS = {  # mission file -> its phase map
+    "survey.waypoints": "mission_phases.json",
+    "survey_long.waypoints": "survey_long.phases.json",
+}
+PHASE_ORDER = ["takeoff", "transit_out", "survey", "transit_back", "landing"]
+
+
+@pytest.mark.parametrize("mission", MISSIONS)
+def test_mission_and_phase_map_agree(mission):
+    lines = (ROOT / "sitl" / mission).read_text().splitlines()
+    assert lines[0] == "QGC WPL 110"
+    items = [line.split("\t") for line in lines[1:]]
+    assert [int(i[0]) for i in items] == list(range(len(items)))
+    assert items[1][3] == "84" and items[-1][3] == "85"          # VTOL takeoff first, VTOL land last
+    phases = E.load_phases(ROOT / "sitl" / MISSIONS[mission])
+    order = []
+    for seq in range(1, len(items)):
+        p = E.phase_for(seq, phases)
+        if not order or order[-1] != p:
+            order.append(p)
+    assert order == PHASE_ORDER
+
+
+def test_values_belong_to_their_own_second(rows):
+    # each row carries the values received during its second, not the second before (fixed 2026-10-26)
+    by_sec = {second_of(r): r for r in rows}
+    assert by_sec[20]["battery_cruise_pct"] == 98.0 and by_sec[19]["battery_cruise_pct"] == 99.0
+    assert by_sec[5]["flight_mode"] == "takeoff"                     # the first armed second has a row
+
+
+REAL_FLIGHTS = sorted((ROOT / "sitl" / "flights").glob("*.tlog")) if (ROOT / "sitl" / "flights").exists() else []
+PHASES_FOR_FLIGHT = {"survey_short": "mission_phases.json", "survey_long": "survey_long.phases.json"}
 
 
 @pytest.mark.skipif(not REAL_FLIGHTS, reason="no recorded SITL flight in sitl/flights/")
 @pytest.mark.parametrize("flight", REAL_FLIGHTS, ids=lambda p: p.name)
 def test_recorded_sitl_flight_loads_cleanly(flight, tmp_path):
-    rows = E.transform(E.extract(flight), E.load_phases(ROOT / "sitl" / "mission_phases.json"), "D0001_S_AM")
+    msgs = list(E.extract(flight))
+    assert any(E.is_transition_done(m) for m in msgs)              # QuadPlane: phases use the transition
+    rows = E.transform(msgs, E.load_phases(ROOT / "sitl" / PHASES_FOR_FLIGHT[flight.stem]), "D0001_S_AM")
     assert len(rows) > 60
-    assert {"takeoff", "survey", "landing"} <= {r["flight_mode"] for r in rows}
+    order = []
+    for r in rows:
+        if not order or order[-1] != r["flight_mode"]:
+            order.append(r["flight_mode"])
+    assert order == PHASE_ORDER
     assert rows[-1]["battery_cruise_pct"] < rows[0]["battery_cruise_pct"]   # battery monitor was on
     E.write_dataset(rows, tmp_path, "D0001_S_AM")
     assert E.load(tmp_path, tmp_path / "x.db").rejected == 0
