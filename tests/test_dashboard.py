@@ -92,3 +92,10 @@ def test_vtol_is_used_only_in_takeoff_and_landing(dashboard_db):
     e = Q.energy_by_phase(Q.connect_ro(dashboard_db)).set_index("flight_mode")
     assert (e.loc[["transit_out", "survey", "transit_back"], "vtol_used_pct"] == 0).all()
     assert (e.loc[["takeoff", "landing"], "vtol_used_pct"] > 20).all()
+
+
+def test_sidebar_offers_only_databases_that_exist(dashboard_db, tmp_path, monkeypatch):
+    # Inside Docker there is no data/test.db; offering it would only lead to an empty page.
+    monkeypatch.chdir(tmp_path)  # no data/ folder here
+    at = run_page("page_overview")
+    assert at.sidebar.selectbox[0].options == [dashboard_db]

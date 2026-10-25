@@ -44,7 +44,9 @@ def get(name: str, *args):
 
 def sidebar() -> None:
     default = os.environ.get("DRONE_DB_PATH", "data/drone.db")
-    options = list(dict.fromkeys([default, "data/drone.db", "data/test.db"]))
+    # only offer files that exist (inside Docker there is no data/test.db), plus the configured one
+    options = [p for p in dict.fromkeys([default, "data/drone.db", "data/test.db"])
+               if p == default or os.path.exists(p)]
     labels = {"data/drone.db": "dev set (data/drone.db)", "data/test.db": "test set (data/test.db)"}
     st.sidebar.selectbox("Database", options, key="db_path", format_func=lambda p: labels.get(p, p))
     st.sidebar.caption("Read-only. The dashboard never writes to the database.")

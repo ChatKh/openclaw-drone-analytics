@@ -1,5 +1,7 @@
 # OpenClaw Drone Analytics
 
+[![CI](https://github.com/ChatKh/openclaw-drone-analytics/actions/workflows/ci.yml/badge.svg)](https://github.com/ChatKh/openclaw-drone-analytics/actions/workflows/ci.yml)
+
 ระบบ monitoring และ fault analytics สำหรับฝูงโดรน โดยใช้ข้อมูลจำลอง (synthetic)
 จุดขายหลัก: แยก **เฉลย** (`injected_anomalies` = ความผิดปกติที่ฉีดเข้าไปเอง) ออกจาก
 **สิ่งที่ระบบตรวจเจอ** (`alerts`) เพื่อวัด precision/recall ของตัวตรวจจับได้จริง
@@ -13,7 +15,7 @@
 | 5 | Analytics: rule-based + ML (Isolation Forest + envelope) + precision/recall | เสร็จ |
 | 6 | Dashboard (Streamlit, read-only) | เสร็จ |
 | 7 | OpenClaw agent (read-only) + guardrails, ทดสอบกับโมเดลในเครื่อง | เสร็จ |
-| 8 | ทั้งระบบคำสั่งเดียว + integration test, Docker, CI | กำลังทำ |
+| 8 | ทั้งระบบคำสั่งเดียว + integration test, Docker, CI + results gate | เสร็จ |
 | 9 | writeup | วางแผน |
 
 ## โครงสร้าง
@@ -46,7 +48,8 @@ openclaw-drone-analytics/
 │   └── evaluation/          # เฟส 5: ส่วนเดียวที่อ่านเฉลยได้
 │       ├── evaluator.py         # precision / recall / false alarm ต่อชั่วโมง
 │       ├── sweep.py             # กวาด threshold บนชุด dev
-│       └── compare.py           # rule vs ML บนข้อมูลชุดเดียวกัน + กราฟ SVG
+│       ├── compare.py           # rule vs ML บนข้อมูลชุดเดียวกัน + กราฟ SVG
+│       └── gate.py              # เฟส 8: fail ถ้า precision/recall ต่ำกว่าเกณฑ์
 ├── bin/fleet                # wrapper: คำสั่งเดียวที่ OpenClaw ได้รับอนุญาตให้รัน (.venv หรือ python3)
 ├── Dockerfile, docker-compose.yml   # เฟส 8: ทั้ง stack
 ├── openclaw/skills/fleet-analytics/SKILL.md   # สอน agent ว่าใช้ fleet ยังไง
@@ -103,6 +106,20 @@ docker compose up --build        # ครั้งแรกนานหลาย
 - ถ้า API กับ pipeline ใช้ฐานข้อมูลคนละไฟล์ pipeline จะ fail พร้อมบอกเหตุผล ไม่ผ่านเงียบๆ
 - agent CLI ใน stack: `docker compose exec api bin/fleet --pretty summary`
 - เริ่มใหม่หมด (ลบ volume): `docker compose down -v`
+
+## CI (GitHub Actions)
+
+ทุกครั้งที่ push ไปที่ `main` (`.github/workflows/ci.yml`):
+
+| job | ทำอะไร |
+|---|---|
+| `tests` | เทสต์ทั้งหมดบน Python 3.10 (รุ่นเดียวกับเครื่องที่พัฒนา) |
+| `results` | รัน pipeline ชุด dev เต็ม แล้วผ่าน **results gate**: ถ้า precision/recall ต่ำกว่าเกณฑ์ build แดง |
+| `docker` | build image แล้วรัน pipeline ผ่าน API ใน `docker compose` + agent CLI อ่านฐานข้อมูลเดียวกัน |
+
+results gate (`python -m src.evaluation.gate`) ตั้งเกณฑ์ไว้ต่ำกว่าผลวันนี้เล็กน้อย
+(rule ≥ 95% / 95%, ML ≥ 85% / 80%) false alarm เพิ่ม 1 ครั้งไม่ทำให้แดง แต่ถ้าตัวตรวจจับแย่ลงจริงจะแดงทันที
+เหมือน regression limit ของสถานีทดสอบในสายการผลิต ห้ามลดเกณฑ์เพื่อให้ build เขียวโดยไม่บันทึกเหตุผล
 
 ## รันทีละขั้น: สร้างข้อมูล → เก็บลงฐานข้อมูล
 

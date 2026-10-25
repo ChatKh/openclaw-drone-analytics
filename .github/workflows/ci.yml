@@ -1,0 +1,74 @@
+# Continuous integration (Phase 8, day 22). Runs on every push and pull request to main.
+#   tests    136+ unit and integration tests on Python 3.10 (the development machine's version)
+#   results  full dev-set pipeline, then the results gate: fail if precision/recall drop
+#   docker   build the image and run the pipeline through the API inside docker compose
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  tests:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.10"
+          cache: pip
+      - run: pip install -r requirements.txt
+      - run: python -m pytest -q
+
+  results:
+    needs: tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.10"
+          cache: pip
+      - run: pip install -r requirements.txt
+      - name: Full dev-set pipeline (simulate -> API -> detectors -> evaluate)
+        run: python -m src.pipeline --fresh
+      - name: Results gate
+        run: python -m src.evaluation.gate --report data/pipeline_report.json
+      - name: Keep the report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: pipeline-report
+          path: data/pipeline_report.json
+          if-no-files-found: warn
+
+  docker:
+    needs: tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build the image
+        run: docker compose build
+      - name: Pipeline through the API, inside compose
+        run: docker compose run --rm pipeline
+      - name: Agent CLI reads the same database
+        run: docker compose exec -T api bin/fleet summary
+      - name: Logs on failure
+        if: failure()
+        run: docker compose logs --no-color
+      - name: Clean up
+        if: always()
+        run: docker compose down -v
