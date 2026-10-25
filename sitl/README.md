@@ -8,6 +8,7 @@ schema, API and database as the simulator's data. Nothing downstream changes.
 |---|---|
 | `survey.waypoints` | the mission: VTOL takeoff to 40 m, a short two-leg survey, VTOL landing at home (~4 min) |
 | `mission_phases.json` | which flight phase each leg is (by the waypoint being flown toward) |
+| `sitl.parm` | parameters on top of ArduPilot's quadplane defaults: the battery monitor on |
 | `flights/*.tlog` | recorded flights, small enough to keep in git; CI runs the ETL on them |
 
 ## Fly once
@@ -17,8 +18,13 @@ ArduPilot installed in `~/ardupilot` (`Tools/environment_install/install-prereqs
 
 ```bash
 mkdir -p ~/sitl-runs/flight1 && cd ~/sitl-runs/flight1
-~/ardupilot/Tools/autotest/sim_vehicle.py -v ArduPlane -f quadplane --console --map -w
+~/ardupilot/Tools/autotest/sim_vehicle.py -v ArduPlane -f quadplane --console --map -w \
+    --add-param-file=/home/dev/openclaw-drone-analytics/sitl/sitl.parm
 ```
+
+`-w` resets every parameter to the defaults, then `sitl.parm` is applied on top, so each flight
+starts from the same settings. Without it the battery monitor is off and the ETL gets no rows
+(`battery_remaining` = -1 throughout; the ETL says so). Check with `param show BATT_MONITOR` (4).
 
 Wait until the console says the EKF is using GPS (about a minute), then type in the MAVProxy prompt:
 

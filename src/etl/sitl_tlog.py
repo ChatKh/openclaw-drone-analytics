@@ -10,6 +10,8 @@ Transform  one row per second while the vehicle is armed:
              ground speed     VFR_HUD.groundspeed (m/s)
              GPS              GPS_RAW_INT.satellites_visible, eph (HDOP x 100)
              battery          SYS_STATUS.battery_remaining (%) -> battery_cruise_pct
+                              (-1 when the battery monitor is off: the default quadplane SITL
+                              has it off, so flights use sitl/sitl.parm)
              flight phase     MISSION_CURRENT.seq (the waypoint being flown to) -> phase map file
            Decisions, written down because they change numbers:
              - SITL simulates one battery pack, so battery_vtol_pct = NULL (schema v2)
@@ -142,6 +144,23 @@ def transform(messages: Iterable[dict], phases: dict[int, str], mission_id: str,
     return rows
 
 
+def diagnose(messages: list[dict]) -> list[str]:
+    """Why a log gave no rows: each reason names the missing input and, where known, the fix."""
+    kinds = {m["msg"] for m in messages}
+    reasons = []
+    if not any(m["msg"] == "HEARTBEAT" and m["base_mode"] & ARMED_FLAG for m in messages):
+        reasons.append("the vehicle was never armed in this log")
+    for kind, field in (("GLOBAL_POSITION_INT", "position/altitude"), ("VFR_HUD", "ground speed"),
+                        ("GPS_RAW_INT", "satellites/hdop"), ("SYS_STATUS", "battery")):
+        if kind not in kinds:
+            reasons.append(f"no {kind} messages: no {field}")
+    status = [m for m in messages if m["msg"] == "SYS_STATUS"]
+    if status and all(m["battery_remaining"] < 0 for m in status):
+        reasons.append("SYS_STATUS.battery_remaining is -1 (unknown) in every message: the battery "
+                       "monitor is off. Fly with sitl/sitl.parm (BATT_MONITOR 4), see sitl/README.md")
+    return reasons
+
+
 def mission_row(rows: list[dict], mission_id: str) -> dict:
     start, end = rows[0]["timestamp"], rows[-1]["timestamp"]
     minutes = round(len(rows) / 60, 1)
@@ -203,9 +222,12 @@ def main(argv: list[str] | None = None) -> int:
         log.error("%s not found", args.tlog)
         return 2
     drone = args.mission_id.split("_")[1]
-    rows = transform(extract(args.tlog), load_phases(args.phases), args.mission_id, drone)
+    messages = list(extract(args.tlog))
+    rows = transform(messages, load_phases(args.phases), args.mission_id, drone)
     if not rows:
-        log.error("no armed flight with position, GPS and battery found in %s", args.tlog)
+        log.error("no rows from %s:", args.tlog)
+        for reason in diagnose(messages) or ["an input was missing while armed (cause not identified)"]:
+            log.error("  - %s", reason)
         return 1
     write_dataset(rows, args.out, args.mission_id)
     phases = {}

@@ -24,8 +24,10 @@ def seq_at(s: int) -> int:
     return [q for start, q in SEQ_BY_SECOND if s >= start][-1]
 
 
-def write_tlog(path: Path) -> None:
-    """130 s: disarmed 0-4 s, armed 5-125 s, disarmed after. Gaps at 60-62 s (short) and 100-109 s (long)."""
+def write_tlog(path: Path, battery_monitor: bool = True) -> None:
+    """130 s: disarmed 0-4 s, armed 5-125 s, disarmed after. Gaps at 60-62 s (short) and 100-109 s (long).
+
+    battery_monitor=False: SYS_STATUS as ArduPilot sends it with BATT_MONITOR 0 (remaining -1, 0 V)."""
     from pymavlink.dialects.v20 import ardupilotmega as mav
 
     vehicle, gcs = mav.MAVLink(None, srcSystem=1, srcComponent=1), mav.MAVLink(None, srcSystem=255, srcComponent=190)
@@ -47,7 +49,8 @@ def write_tlog(path: Path) -> None:
         put(t + 0.20, vehicle, vehicle.vfr_hud_encode(20.0, 21.5 if armed else 0.0, 0, 50, 624.0, 0.0))
         eph = 65535 if s in (30, 31) else 80                       # no fix for two seconds
         put(t + 0.30, vehicle, vehicle.gps_raw_int_encode(s * 1_000_000, 3, 0, 0, 0, eph, 120, 0, 0, 10))
-        put(t + 0.40, vehicle, vehicle.sys_status_encode(0, 0, 0, 0, 12_600, 1000, 100 - s // 10,
+        volts, remaining = (12_600, 100 - s // 10) if battery_monitor else (0, -1)
+        put(t + 0.40, vehicle, vehicle.sys_status_encode(0, 0, 0, 0, volts, 1000, remaining,
                                                          0, 0, 0, 0, 0, 0))
         if armed:
             put(t + 0.50, vehicle, vehicle.mission_current_encode(seq_at(s)))
@@ -122,7 +125,29 @@ def test_cli_end_to_end(tlog, tmp_path):
     assert E.main(["--tlog", str(tmp_path / "missing.tlog"), "--mission-id", "D0001_S_AM"]) == 2
 
 
-REAL_FLIGHTS = sorted((ROOT / "sitl" / "flights").glob("*.tlog")) if (ROOT / "sitl" / "flights").exists() else []
+def test_battery_monitor_off_gives_no_rows_and_says_why(tmp_path, caplog):
+    # The first real SITL flight (2026-10-25): quadplane defaults leave BATT_MONITOR off.
+    path = tmp_path / "no_battery.tlog"
+    write_tlog(path, battery_monitor=False)
+    msgs = list(E.extract(path))
+    assert E.transform(msgs, E.load_phases(ROOT / "sitl" / "mission_phases.json"), "D0001_S_AM") == []
+    assert any("BATT_MONITOR" in r for r in E.diagnose(msgs))
+    code = E.main(["--tlog", str(path), "--mission-id", "D0001_S_AM", "--out", str(tmp_path / "o"),
+                   "--phases", str(ROOT / "sitl" / "mission_phases.json")])
+    assert code == 1 and "BATT_MONITOR" in caplog.text
+
+
+def test_a_good_log_has_nothing_to_diagnose(tlog):
+    assert E.diagnose(list(E.extract(tlog))) == []
+
+
+def test_parameter_file_turns_the_battery_monitor_on():
+    params = dict(line.split()[:2] for line in (ROOT / "sitl" / "sitl.parm").read_text().splitlines()
+                  if line.strip() and not line.startswith("#"))
+    assert params["BATT_MONITOR"] == "4" and int(params["BATT_CAPACITY"]) > 0
+
+
+REAL_FLIGHTS =sorted((ROOT / "sitl" / "flights").glob("*.tlog")) if (ROOT / "sitl" / "flights").exists() else []
 
 
 @pytest.mark.skipif(not REAL_FLIGHTS, reason="no recorded SITL flight in sitl/flights/")
@@ -131,5 +156,6 @@ def test_recorded_sitl_flight_loads_cleanly(flight, tmp_path):
     rows = E.transform(E.extract(flight), E.load_phases(ROOT / "sitl" / "mission_phases.json"), "D0001_S_AM")
     assert len(rows) > 60
     assert {"takeoff", "survey", "landing"} <= {r["flight_mode"] for r in rows}
+    assert rows[-1]["battery_cruise_pct"] < rows[0]["battery_cruise_pct"]   # battery monitor was on
     E.write_dataset(rows, tmp_path, "D0001_S_AM")
     assert E.load(tmp_path, tmp_path / "x.db").rejected == 0

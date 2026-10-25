@@ -1,0 +1,10 @@
+# Parameters layered on ArduPilot's quadplane defaults for every recorded flight.
+# Pass with: sim_vehicle.py ... -w --add-param-file=<repo>/sitl/sitl.parm
+#
+# Battery monitor. quadplane.parm leaves it off (type NONE), so SYS_STATUS reports
+# battery_remaining = -1 and voltage 0 for the whole flight (found on the first flight,
+# 2026-10-25). Type 4 = analog voltage and current: SITL simulates the current drawn by
+# the motors and ArduPilot counts the mAh used against BATT_CAPACITY.
+BATT_MONITOR    4
+# ArduPilot's default capacity, written out so the number behind battery_remaining is in the repo.
+BATT_CAPACITY   3300
