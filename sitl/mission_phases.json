@@ -1,0 +1,12 @@
+{
+ "_note": "Flight phase of the leg flown TOWARD each waypoint (MISSION_CURRENT.seq). Mission: sitl/survey.waypoints. Home = ArduPilot SITL default (CMAC). Survey altitude 40 m above home.",
+ "toward_waypoint": {
+  "1": "takeoff",
+  "2": "transit_out",
+  "3": "survey",
+  "4": "survey",
+  "5": "survey",
+  "6": "transit_back",
+  "7": "landing"
+ }
+}

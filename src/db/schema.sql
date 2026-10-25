@@ -1,4 +1,6 @@
--- OpenClaw Drone Analytics: database schema v1 (Phase 4)
+-- OpenClaw Drone Analytics: database schema v2
+-- v2 (SITL ETL): battery_vtol_pct may be NULL = the source has no separate VTOL pack.
+--     Existing v1 databases are rebuilt by src/db/database.py:_migrate (data kept).
 -- Times are TEXT 'YYYY-MM-DD HH:MM:SS' (local mission time).
 -- Deferred tables (designed, not created yet): coverage_points, maintenance_events.
 
@@ -35,7 +37,7 @@ CREATE TABLE IF NOT EXISTS telemetry_logs (
     mission_id          TEXT NOT NULL REFERENCES missions(mission_id),
     flight_mode         TEXT NOT NULL CHECK (flight_mode IN
                           ('rest', 'takeoff', 'transit_out', 'survey', 'transit_back', 'landing')),
-    battery_vtol_pct    REAL NOT NULL CHECK (battery_vtol_pct BETWEEN 0 AND 100),
+    battery_vtol_pct    REAL CHECK (battery_vtol_pct BETWEEN 0 AND 100),  -- NULL: no VTOL pack in this source
     battery_cruise_pct  REAL NOT NULL CHECK (battery_cruise_pct BETWEEN 0 AND 100),
     lat                 REAL NOT NULL,
     lon                 REAL NOT NULL,

@@ -96,7 +96,7 @@ def window_features(rows) -> list[tuple[str, str, list[float]]]:
             float(min(r["satellite_count"] for r in w)),
             (bat[0] - bat[-1]) / WINDOW_S,
             max(bat[i - 1] - bat[i] for i in range(1, len(bat))),
-            w[0]["battery_vtol_pct"],
+            float("nan") if w[0]["battery_vtol_pct"] is None else w[0]["battery_vtol_pct"],
         ]))
     return out
 
@@ -168,6 +168,9 @@ def detect_mission(rows, bundle: dict, mode: str = DEFAULT_MODE, merge_gap_s: in
     if not feats:
         return []
     X = np.array([f for _, _, f in feats])
+    # A feature the source does not report (NaN, e.g. no VTOL pack in SITL) is set to its normal
+    # median: it then neither raises nor hides anything, and the other features still count.
+    X = np.where(np.isnan(X), bundle["median"], X)
     forest_score = -bundle["model"].score_samples(X)
     forest = forest_score > bundle["if_threshold"]
     excess = _excess(X, bundle, bundle["margin"])

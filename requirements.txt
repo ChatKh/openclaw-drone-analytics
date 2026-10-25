@@ -8,3 +8,4 @@ numpy==2.2.6
 streamlit==1.40.2
 pandas==2.2.3
 altair==5.5.0
+pymavlink==2.4.50

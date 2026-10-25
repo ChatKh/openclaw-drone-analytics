@@ -10,7 +10,7 @@ valid data and must be accepted. Detection happens in Phase 5.
 from datetime import datetime
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 FlightMode = Literal["rest", "takeoff", "transit_out", "survey", "transit_back", "landing"]
 
@@ -27,7 +27,9 @@ class TelemetryIn(BaseModel):
     drone_id: str = Field(pattern=r"^[A-Z]$")
     mission_id: str = Field(pattern=MISSION_ID_PATTERN)
     flight_mode: FlightMode
-    battery_vtol_pct: float = Field(ge=0, le=100)
+    # None = this source has no separate VTOL pack (ArduPilot SITL simulates one battery). The key
+    # stays required, so a forgotten column is still an error; an empty CSV cell means None.
+    battery_vtol_pct: float | None = Field(ge=0, le=100)
     battery_cruise_pct: float = Field(ge=0, le=100)
     lat: float = Field(ge=-90, le=90)
     lon: float = Field(ge=-180, le=180)
@@ -35,6 +37,12 @@ class TelemetryIn(BaseModel):
     ground_speed_mps: float = Field(ge=0, le=60)
     satellite_count: int = Field(ge=0, le=64)
     hdop: float = Field(gt=0, le=99.99)
+
+
+    @field_validator("battery_vtol_pct", mode="before")
+    @classmethod
+    def _empty_is_none(cls, v):
+        return None if v == "" else v
 
 
 class RejectedRow(BaseModel):

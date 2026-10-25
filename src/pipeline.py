@@ -89,25 +89,30 @@ def _step(report: Report, name: str):
     log.info("✓ %s (%.1f s)", name, report.steps[name])
 
 
-def _send(cfg: Config, rows):
-    if cfg.api_url:
+def send_through_api(rows, db: Path, api_url: str | None = None, batch_size: int = 5000):
+    """Send telemetry rows through the ingestion API: a running server, or the same app in-process."""
+    if api_url:
         import httpx
-        with httpx.Client(base_url=cfg.api_url, timeout=120) as client:
+        with httpx.Client(base_url=api_url, timeout=120) as client:
             client.get("/health").raise_for_status()
-            return send_rows(client, rows, cfg.batch_size)
+            return send_rows(client, rows, batch_size)
     # In-process: the real FastAPI app and validation, without a server or a port.
     from fastapi.testclient import TestClient
     from src.api.main import app
     before = os.environ.get("DRONE_DB_PATH")
-    os.environ["DRONE_DB_PATH"] = str(cfg.db)  # the app opens its DB per request from this
+    os.environ["DRONE_DB_PATH"] = str(db)  # the app opens its DB per request from this
     try:
         with TestClient(app) as client:
-            return send_rows(client, rows, cfg.batch_size)
+            return send_rows(client, rows, batch_size)
     finally:
         if before is None:
             os.environ.pop("DRONE_DB_PATH", None)
         else:
             os.environ["DRONE_DB_PATH"] = before
+
+
+def _send(cfg: Config, rows):
+    return send_through_api(rows, cfg.db, cfg.api_url, cfg.batch_size)
 
 
 def run(cfg: Config, report: Report | None = None) -> Report:

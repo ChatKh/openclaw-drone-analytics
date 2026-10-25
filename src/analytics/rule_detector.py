@@ -141,7 +141,9 @@ def detect_mission(rows, cfg: RuleConfig) -> list[Alert]:
     add("sensor", _sensor_flags(rows, cfg))
 
     back = next((r for r in rows if r["flight_mode"] == "transit_back"), None)
-    if back is not None and back["battery_vtol_pct"] < cfg.min_vtol_return_pct:
+    # no VTOL pack reported (e.g. SITL): nothing to check
+    if back is not None and back["battery_vtol_pct"] is not None \
+            and back["battery_vtol_pct"] < cfg.min_vtol_return_pct:
         alerts.append(Alert(drone, mission, "lipo", back["timestamp"], rows[-1]["timestamp"],
                             round(cfg.min_vtol_return_pct - back["battery_vtol_pct"], 2)))
     return alerts

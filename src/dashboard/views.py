@@ -194,7 +194,8 @@ def page_energy() -> None:
              .agg(minutes=("minutes", "mean"), vtol=("vtol_used_pct", "mean"), cruise=("cruise_used_pct", "mean")))
     vt = fleet[fleet["flight_mode"].isin(["takeoff", "landing"])]
     cols = st.columns(3)
-    cols[0].metric("VTOL battery used, takeoff + landing", f"{vt['vtol'].sum():.0f} %")
+    vtol_known = vt["vtol"].notna().any()  # a source without a VTOL pack (SITL) reports none
+    cols[0].metric("VTOL battery used, takeoff + landing", f"{vt['vtol'].sum():.0f} %" if vtol_known else "n/a")
     cols[1].metric("in minutes", f"{vt['minutes'].sum():.1f}")
     cols[2].metric("Cruise battery used, whole flight", f"{fleet['cruise'].sum():.0f} %")
     st.caption("Fleet average per flight. The VTOL pack drains fast in a few minutes of hover; "
