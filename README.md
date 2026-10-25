@@ -13,7 +13,8 @@
 | 5 | Analytics: rule-based + ML (Isolation Forest + envelope) + precision/recall | เสร็จ |
 | 6 | Dashboard (Streamlit, read-only) | เสร็จ |
 | 7 | OpenClaw agent (read-only) + guardrails, ทดสอบกับโมเดลในเครื่อง | เสร็จ |
-| 8–9 | Docker + CI, writeup | วางแผน |
+| 8 | ทั้งระบบคำสั่งเดียว + integration test, Docker, CI | กำลังทำ |
+| 9 | writeup | วางแผน |
 
 ## โครงสร้าง
 
@@ -67,7 +68,24 @@ pip install -r requirements.txt
 python -m pytest -q
 ```
 
-## รันทั้งเส้น: สร้างข้อมูล → เก็บลงฐานข้อมูล
+## รันทั้งระบบคำสั่งเดียว (เฟส 8)
+
+```bash
+python -m src.pipeline --fresh          # ชุด dev ทั้งหมด ~15 วินาที (ครั้งแรกบวกฝึก ML ~40 วินาที)
+python -m src.pipeline --fresh --seed 7 --days 30 --data-dir data/test --db data/test.db   # ชุด test
+```
+
+simulate → CSV → reference + เฉลย → telemetry **ผ่าน API** → SQLite → rule + ML → evaluate
+แล้วเขียนรายงาน `data/pipeline_report.json` (เวลาแต่ละขั้น, จำนวนแถว, precision/recall)
+
+- ถ้าตัวเลขไม่ลงกัน (แถวถูกปฏิเสธ, ส่งไม่ครบ, API เขียนลงคนละฐานข้อมูล) ให้ exit code 1 ไม่ผ่านเงียบๆ
+- `--fresh` ลบฐานข้อมูลก่อน: ถ้าไม่ลบ แถวเดิมจะถูกนับเป็น duplicate และข้อมูลเก่าจะค้างอยู่
+- `--api-url http://...` ส่งผ่าน API ที่รันอยู่จริง (ใช้ใน Docker) ไม่ใส่ = รัน API ในโปรเซสเดียวกัน (โค้ดเดียวกัน ไม่ต้องเปิดพอร์ต)
+
+`tests/test_pipeline.py` รันทั้งเส้นบนข้อมูล 3 วัน แล้วเช็คว่าทุกส่วนเห็นตัวเลขตรงกัน:
+API → ฐานข้อมูล → detector → evaluator → dashboard → agent CLI และรันซ้ำแล้วไม่มีอะไรซ้ำ
+
+## รันทีละขั้น: สร้างข้อมูล → เก็บลงฐานข้อมูล
 
 ```bash
 source .venv/bin/activate

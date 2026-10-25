@@ -8,3 +8,4 @@ data/*.db-*
 data/test/
 models/
 logs/
+data/*.json
