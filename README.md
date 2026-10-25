@@ -47,7 +47,8 @@ openclaw-drone-analytics/
 │       ├── evaluator.py         # precision / recall / false alarm ต่อชั่วโมง
 │       ├── sweep.py             # กวาด threshold บนชุด dev
 │       └── compare.py           # rule vs ML บนข้อมูลชุดเดียวกัน + กราฟ SVG
-├── bin/fleet                # wrapper: คำสั่งเดียวที่ OpenClaw ได้รับอนุญาตให้รัน
+├── bin/fleet                # wrapper: คำสั่งเดียวที่ OpenClaw ได้รับอนุญาตให้รัน (.venv หรือ python3)
+├── Dockerfile, docker-compose.yml   # เฟส 8: ทั้ง stack
 ├── openclaw/skills/fleet-analytics/SKILL.md   # สอน agent ว่าใช้ fleet ยังไง
 ├── tests/                   # pytest: API, ฐานข้อมูล, simulator, ตัวตรวจจับ, evaluator
 ├── docs/                    # กราฟผลลัพธ์ (SVG)
@@ -84,6 +85,24 @@ simulate → CSV → reference + เฉลย → telemetry **ผ่าน API**
 
 `tests/test_pipeline.py` รันทั้งเส้นบนข้อมูล 3 วัน แล้วเช็คว่าทุกส่วนเห็นตัวเลขตรงกัน:
 API → ฐานข้อมูล → detector → evaluator → dashboard → agent CLI และรันซ้ำแล้วไม่มีอะไรซ้ำ
+
+## Docker: ทั้ง stack คำสั่งเดียว (เฟส 8)
+
+```bash
+docker compose up --build        # ครั้งแรกนานหลายนาที (ติดตั้ง package + ฝึก ML ~40 วินาที)
+```
+
+| service | ทำอะไร | เปิดที่ |
+|---|---|---|
+| `api` | ingestion API | http://127.0.0.1:8000/docs |
+| `pipeline` | simulate → ส่งผ่าน `api` → detectors → evaluate แล้วจบ | (log) |
+| `dashboard` | Streamlit อ่านอย่างเดียว เริ่มหลัง pipeline สำเร็จ | http://127.0.0.1:8501 |
+
+- ทุก service ใช้ image เดียวกัน (Python 3.10) และ volume `fleet-data` (`/data`) ร่วมกัน: ฐานข้อมูล, CSV, โมเดล, audit log
+- พอร์ตผูกกับ `127.0.0.1` เท่านั้น เครื่องอื่นต่อไม่ได้; container รันด้วย user ธรรมดา ไม่ใช่ root
+- ถ้า API กับ pipeline ใช้ฐานข้อมูลคนละไฟล์ pipeline จะ fail พร้อมบอกเหตุผล ไม่ผ่านเงียบๆ
+- agent CLI ใน stack: `docker compose exec api bin/fleet --pretty summary`
+- เริ่มใหม่หมด (ลบ volume): `docker compose down -v`
 
 ## รันทีละขั้น: สร้างข้อมูล → เก็บลงฐานข้อมูล
 

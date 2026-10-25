@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
 # The single command the OpenClaw agent is allowed to run (Phase 7).
-# Runs the read-only fleet CLI from the project folder with the project's venv.
+# Runs the read-only fleet CLI from the project folder: with the project's venv
+# when there is one (development machine), otherwise with python3 (Docker, CI).
 set -euo pipefail
 cd "$(dirname "$(readlink -f "$0")")/.."
-exec .venv/bin/python -m src.agent.fleet "$@"
+if [ -x .venv/bin/python ]; then PY=.venv/bin/python; else PY=python3; fi
+exec "$PY" -m src.agent.fleet "$@"

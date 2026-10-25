@@ -1,7 +1,9 @@
 """Tests for the agent's fleet CLI (Phase 7): it answers, and it cannot be talked into harm."""
 import hashlib
 import json
+import os
 import subprocess
+import sys
 from pathlib import Path
 
 import pytest
@@ -134,11 +136,10 @@ def test_every_call_is_audited(dashboard_db, capsys, audit_log):
 
 def test_wrapper_script_runs_from_any_folder(dashboard_db, tmp_path):
     # OpenClaw may run the command from its own workspace; bin/fleet must still find the project.
-    out = subprocess.run([str(ROOT / "bin" / "fleet"), "summary"], cwd=tmp_path, capture_output=True,
-                         text=True, env={"DRONE_DB_PATH": dashboard_db, "FLEET_AUDIT_LOG": str(tmp_path / "a.jsonl"),
-                                         "PATH": "/usr/bin:/bin"})
-    if out.returncode != 0 and ".venv/bin/python" in out.stderr:
-        pytest.skip("project .venv not found next to bin/fleet")
+    # Without a .venv (Docker, CI) it falls back to python3: put this test's Python first on PATH.
+    env = {**os.environ, "DRONE_DB_PATH": dashboard_db, "FLEET_AUDIT_LOG": str(tmp_path / "a.jsonl"),
+           "PATH": f"{Path(sys.executable).parent}:{os.environ.get('PATH', '/usr/bin:/bin')}"}
+    out = subprocess.run([str(ROOT / "bin" / "fleet"), "summary"], cwd=tmp_path,
+                         capture_output=True, text=True, env=env)
     assert out.returncode == 0, out.stderr
     assert json.loads(out.stdout)["summary"]["flights"] == 1
-

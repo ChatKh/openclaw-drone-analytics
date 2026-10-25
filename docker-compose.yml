@@ -1,0 +1,66 @@
+# Whole stack with one command:   docker compose up --build
+#   api        ingestion API             http://127.0.0.1:8000/docs
+#   pipeline   simulate -> API -> detectors -> evaluate, then exits
+#   dashboard  read-only Streamlit       http://127.0.0.1:8501
+# Ports are bound to 127.0.0.1 only: nothing is reachable from other machines.
+# Agent CLI inside the stack:  docker compose exec api bin/fleet --pretty summary
+# Start over (delete the database volume):  docker compose down -v
+
+name: openclaw-drone-analytics
+
+x-app: &app
+  build: .
+  image: openclaw-drone-analytics:local
+  environment:
+    DRONE_DB_PATH: /data/drone.db
+    FLEET_AUDIT_LOG: /data/logs/agent_queries.jsonl
+  volumes:
+    - fleet-data:/data
+
+services:
+  api:
+    <<: *app
+    command: ["uvicorn", "src.api.main:app", "--host", "0.0.0.0", "--port", "8000"]
+    ports:
+      - "127.0.0.1:8000:8000"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=3)"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+
+  pipeline:
+    <<: *app
+    command:
+      - python
+      - -m
+      - src.pipeline
+      - --fresh
+      - --api-url
+      - http://api:8000
+      - --db
+      - /data/drone.db
+      - --data-dir
+      - /data/csv
+      - --model
+      - /data/models/iforest.joblib
+      - --report
+      - /data/pipeline_report.json
+    depends_on:
+      api:
+        condition: service_healthy
+    restart: "no"
+
+  dashboard:
+    <<: *app
+    command: ["streamlit", "run", "src/dashboard/app.py",
+              "--server.address", "0.0.0.0", "--server.port", "8501",
+              "--server.headless", "true", "--browser.gatherUsageStats", "false"]
+    ports:
+      - "127.0.0.1:8501:8501"
+    depends_on:
+      pipeline:
+        condition: service_completed_successfully
+
+volumes:
+  fleet-data:
