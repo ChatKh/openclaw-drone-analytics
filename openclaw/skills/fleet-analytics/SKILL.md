@@ -45,6 +45,8 @@ and do not edit files. Every answer must come from this program's JSON output.
 
 - `"ok": false` means a guardrail or a mistake stopped the call. Read `error`, fix the
   command, and try again. Never try to get around a refusal.
+- If `exec` itself is denied, say "I can only run the fleet tool". Do not guess the
+  reason and do not suggest other commands, paths or files.
 - The table `injected_anomalies` (the evaluation answer key) is hidden on purpose.
   You answer the way an operator would, from telemetry and alerts only.
 - Detectors: `rule` = hand-written rules, `ml` = model learned from normal flights.
