@@ -10,14 +10,15 @@ schema, API and database as the simulator's data. Nothing downstream changes.
 | `survey_long.waypoints` + `survey_long.phases.json` | long mission: 8 survey lines of 1000 m, 200 m apart (~12 km, ~11 min armed). Long enough for the battery rule, which needs 2 x (180 + 60) s of data |
 | `survey_wind.waypoints` + `survey_wind.phases.json` | wind-sweep mission: 12 survey lines (~17.7 km). Cruise stays above the 480 s the battery rule needs even with a tailwind |
 | `sitl.parm` | parameters on top of ArduPilot's quadplane defaults: the battery monitor on |
-| `wind/wind_XX.parm` | one per wind band (0 / 4 / 7 / 10 / 13 m/s), layered after `sitl.parm` |
+| `wind/wind_*.parm` | wind sweep: calm, the top of each flyable band (4.9 / 7.9 / 12 m/s), and 13 m/s; layered after `sitl.parm` |
 | `flights/*.tlog` | recorded flights, kept in git; the tests run the ETL on them |
 
 | Flight | Mission | Mission id | Phase map |
 |---|---|---|---|
 | `flights/survey_short.tlog` | `survey.waypoints` | `D0001_S_AM` | `mission_phases.json` |
 | `flights/survey_long.tlog` | `survey_long.waypoints` | `D0002_S_AM` | `survey_long.phases.json` |
-| `flights/survey_wind_00.tlog` ... `_13.tlog` | `survey_wind.waypoints` | `D0010_S_AM` ... `D0014_S_AM` | `survey_wind.phases.json` |
+| `flights/survey_wind_00.tlog`, `_4.9`, `_7.9`, `_12` | `survey_wind.waypoints` | `D0010_S_AM` ... `D0013_S_AM` | `survey_wind.phases.json` |
+| `flights/survey_wind_13.tlog` | `survey.waypoints` | `D0014_S_AM` | `mission_phases.json` |
 
 ## Fly
 
@@ -114,15 +115,23 @@ changed the code or the setup, and has a test.
 
 ## Wind sweep
 
-One flight per operating band of the drone, speeds fixed before any wind flight:
+The drone's operating bands: 0 to below 5 m/s flies for sure, 5 to below 8 needs a skilled pilot,
+8 to 12 may crash but is still flyable, above 12 it crashes for sure, so the policy is to return or
+land at once. Each flyable band is tested at its **upper edge**, the worst case still inside it.
+Above 12 m/s no survey should be flown, so that flight is short and asks only whether ArduPilot's
+own wind estimate shows the limit was crossed, and how fast. ArduPlane has no built-in wind-speed
+failsafe (searched its source); a return trigger would be ours to add, in the drone project.
 
-| File | Wind | Band |
-|---|---|---|
-| `wind/wind_00.parm` | 0 m/s | calm baseline: same mission and pack as the others |
-| `wind/wind_04.parm` | 4 m/s | 0-5: flies for sure |
-| `wind/wind_07.parm` | 7 m/s | 5-8: needs a skilled pilot |
-| `wind/wind_10.parm` | 10 m/s | 8-12: may crash, still flyable |
-| `wind/wind_13.parm` | 13 m/s | above 12: expected to crash in real life |
+| File | Wind | Band | Mission | Mission id |
+|---|---|---|---|---|
+| `wind/wind_00.parm` | 0 m/s | calm baseline (flown first) | `survey_wind` | `D0010_S_AM` |
+| `wind/wind_4.9.parm` | 4.9 m/s | top of 0 to below 5 | `survey_wind` | `D0011_S_AM` |
+| `wind/wind_7.9.parm` | 7.9 m/s | top of 5 to below 8 | `survey_wind` | `D0012_S_AM` |
+| `wind/wind_12.parm` | 12 m/s | top of 8 to 12 | `survey_wind` | `D0013_S_AM` |
+| `wind/wind_13.parm` | 13 m/s | above 12: wind-estimate check only | `survey` (short) | `D0014_S_AM` |
+
+The speeds were changed from one-per-band values (4 / 7 / 10 / 13) to the band edges after the calm
+flight and before any windy one: no windy result had been seen.
 
 Every file: gusts (`SIM_WIND_TURB`, about the standard deviation) 30 % of the mean, wind from the
 south, full speed at every height, a 10000 mAh pack so the long mission does not run the battery flat.
@@ -132,22 +141,26 @@ against a simple wind model and an ideal airframe, so it shows how the detectors
 behave, not whether the real drone survives the wind.
 
 ```bash
-W=07   # 00, 04, 07, 10, 13
+W=7.9   # 00, 4.9, 7.9, 12, 13
 mkdir -p ~/sitl-runs/wind_$W && cd ~/sitl-runs/wind_$W
 ~/ardupilot/Tools/autotest/sim_vehicle.py -v ArduPlane -f quadplane --console --map -w \
     --add-param-file=/home/dev/openclaw-drone-analytics/sitl/sitl.parm \
     --add-param-file=/home/dev/openclaw-drone-analytics/sitl/wind/wind_$W.parm
 ```
 
-In MAVProxy: `param show SIM_WIND_SPD` (must match), `wp load .../sitl/survey_wind.waypoints`,
-`wp list` (28 items), `mode AUTO`, `arm throttle`. Then, in the project:
+In MAVProxy: `param show SIM_WIND_SPD` (must match), `wp load .../sitl/survey_wind.waypoints`
+(13 m/s: `survey.waypoints`), `wp list` (28 items; 8 for the short one), `mode AUTO`, `arm throttle`.
+Then, in the project:
 
 ```bash
-W=07; M=D0012_S_AM   # 00: D0010  04: D0011  07: D0012  10: D0013  13: D0014
+W=7.9; M=D0012_S_AM; P=sitl/survey_wind.phases.json   # ids in the table; 13 m/s: P=sitl/mission_phases.json
 cp ~/sitl-runs/wind_$W/mav.tlog sitl/flights/survey_wind_$W.tlog
 python -m src.etl.sitl_tlog --tlog sitl/flights/survey_wind_$W.tlog --mission-id $M \
-    --phases sitl/survey_wind.phases.json --out data/sitl_wind_$W --load --db data/sitl.db
+    --phases $P --out data/sitl_wind_$W --load --db data/sitl.db
 ```
 
 The ETL also writes `flight_summary.json`: touchdown speed (SITL's "SIM Hit ground" message), how
-far from take-off it landed, battery used, and any warning ArduPilot raised.
+far from take-off it landed, battery used, any warning ArduPilot raised, and ArduPilot's wind estimate
+(`WIND` message) from forward flight on: median, maximum, seconds above 12 m/s, and when its 30 s
+mean first passed 12 m/s, which is what a return trigger that ignores single gusts would have seen.
+On the calm flights the estimate stayed at 0.1-0.2 m/s.

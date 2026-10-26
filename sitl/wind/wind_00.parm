@@ -1,6 +1,5 @@
-# Wind sweep flight: 0 m/s, calm baseline (same mission, same pack, no wind).
-# Bands are the operating limits the drone is designed for; the speeds were fixed BEFORE any
-# wind flight was flown, one per band, so they are not chosen to suit the detectors.
+# Wind sweep flight: 0 m/s, calm baseline (same mission and pack as the 4.9, 7.9 and 12 m/s flights).
+# Flown 2026-10-26 (flights/survey_wind_00.tlog). Mission: sitl/survey_wind.waypoints
 # Use after sitl.parm:  --add-param-file=<repo>/sitl/sitl.parm --add-param-file=<repo>/sitl/wind/wind_00.parm
 SIM_WIND_SPD    0
 # gusts: SITL's turbulence, about its standard deviation in m/s (SIM_Aircraft::update_wind).

@@ -82,7 +82,7 @@ Without Docker (Python 3.10+):
 ```bash
 python3 -m venv .venv && source .venv/bin/activate
 pip install -r requirements.txt
-python -m pytest -q                 # 187 tests
+python -m pytest -q                 # 190 tests
 python -m src.pipeline --fresh      # whole pipeline on the dev set, ~15 s (+40 s the first time to train ML)
 streamlit run src/dashboard/app.py
 ```
@@ -171,8 +171,9 @@ What it found that the simulator's own data could not (details and numbers in
 5. With no wind and no sensor noise the flight was steadier than any simulated one; the two-sided
    envelope flagged 18 of 42 windows. (v3: one-sided.)
 
-Next: a wind sweep at 0 / 4 / 7 / 10 / 13 m/s, one flight per operating band, speeds fixed before
-flying (`sitl/wind/`), reported as it comes out.
+Next: a wind sweep (`sitl/wind/`): calm, then the upper edge of each flyable band (4.9 / 7.9 / 12 m/s),
+and a short 13 m/s flight that checks whether ArduPilot's wind estimate would show the 12 m/s
+return limit was crossed. Speeds fixed before any windy flight; results reported as they come out.
 
 ## The AI agent, and why its guardrails live in code
 
@@ -220,7 +221,7 @@ every time. Safety has to sit outside the model.
 
 ## Testing and CI
 
-187 tests: API validation, database constraints, simulator, each detector on cases with
+190 tests: API validation, database constraints, simulator, each detector on cases with
 known answers, evaluator, dashboard pages (including empty data), agent guardrails with 14
 attack queries, and an integration test that runs the whole system on three simulated days
 and checks every part reports the same numbers.

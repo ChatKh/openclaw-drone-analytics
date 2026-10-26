@@ -68,6 +68,7 @@ def write_tlog(path: Path, battery_monitor: bool = True, transition_at: int | No
             put(t + 0.70, vehicle, vehicle.statustext_encode(6, b"SIM Hit ground at 0.480000 m/s"))
         if s == 128:
             put(t + 0.70, vehicle, vehicle.statustext_encode(2, b"PreArm: In landing sequence"))
+        put(t + 0.80, vehicle, vehicle.wind_encode(180.0, 8.0 if s < 60 else 14.0, 0.0))   # estimate jumps at 60 s
     path.write_bytes(bytes(out))
 
 
@@ -189,6 +190,20 @@ def test_flight_summary_reports_the_landing(tlog, rows):
     assert s["landed_from_takeoff_m"] == pytest.approx(120 * 1e-5 * 111_320, rel=0.02)  # drifted north
 
 
+def test_wind_estimate_and_when_the_return_trigger_would_fire(tlog, rows):
+    w = E.flight_summary(list(E.extract(tlog)), rows)["wind_estimate"]
+    # from forward flight (25.6 s): 8 m/s until 59 s, 14 m/s from 63 s (no messages 60-62 s).
+    # The 30 s mean first passes 12 m/s when 21 of its 30 seconds read 14: at 83 s.
+    assert w["max_mps"] == 14.0 and w["median_mps"] == 14.0
+    assert w["30s_mean_over_limit_after_s"] == pytest.approx(83 - TRANSITION_AT - 0.6, abs=0.01)
+    assert w["seconds_over_limit"] == (99 - 63 + 1) + (126 - 110 + 1)
+    assert w["limit_mps"] == E.WIND_LIMIT_MPS == 12.0
+
+
+def test_no_wind_messages_no_wind_estimate():
+    assert E.wind_estimate([], 0, 100) is None
+
+
 def test_cli_writes_the_flight_summary(tlog, tmp_path):
     assert E.main(["--tlog", str(tlog), "--mission-id", "D0001_S_AM", "--out", str(tmp_path),
                    "--phases", str(ROOT / "sitl" / "mission_phases.json")]) == 0
@@ -196,7 +211,10 @@ def test_cli_writes_the_flight_summary(tlog, tmp_path):
     assert json.loads((tmp_path / "flight_summary.json").read_text())["touchdown_mps"] == [0.48]
 
 
-WIND = {"00": 0, "04": 4, "07": 7, "10": 10, "13": 13}   # one flight per operating band, fixed in advance
+# The drone's bands: 0-<5, 5-<8, 8-12 m/s each tested at its upper edge after a calm flight; above 12 it
+# must return or land, so 13 m/s is a short flight that checks only the wind estimate.
+WIND = {"00": 0, "4.9": 4.9, "7.9": 7.9, "12": 12, "13": 13}
+WIND_MISSION = {"00": "survey_wind", "4.9": "survey_wind", "7.9": "survey_wind", "12": "survey_wind", "13": "survey"}
 
 
 def read_parm(path):
@@ -211,6 +229,11 @@ def test_wind_files(name, speed):
     assert float(p["SIM_WIND_TURB"]) == pytest.approx(0.3 * speed)      # same gustiness for every speed
     assert p["SIM_WIND_DIR"] == "180" and p["SIM_WIND_T"] == "1"        # same direction, full speed at 40 m
     assert int(p["BATT_CAPACITY"]) == 10000                             # same pack for every speed
+    assert f"sitl/{WIND_MISSION[name]}.waypoints" in (ROOT / "sitl" / "wind" / f"wind_{name}.parm").read_text()
+
+
+def test_wind_folder_holds_exactly_the_planned_flights():
+    assert sorted(p.stem for p in (ROOT / "sitl" / "wind").glob("*.parm")) == sorted(f"wind_{w}" for w in WIND)
 
 
 def test_wind_mission_is_long_enough_for_the_battery_rule():
@@ -257,7 +280,8 @@ def test_values_belong_to_their_own_second(rows):
 
 REAL_FLIGHTS = sorted((ROOT / "sitl" / "flights").glob("*.tlog")) if (ROOT / "sitl" / "flights").exists() else []
 PHASES_FOR_FLIGHT = {"survey_short": "mission_phases.json", "survey_long": "survey_long.phases.json",
-                     **{f"survey_wind_{w}": "survey_wind.phases.json" for w in WIND}}
+                     **{f"survey_wind_{w}": ("mission_phases.json" if m == "survey" else f"{m}.phases.json")
+                        for w, m in WIND_MISSION.items()}}
 
 
 @pytest.mark.skipif(not REAL_FLIGHTS, reason="no recorded SITL flight in sitl/flights/")

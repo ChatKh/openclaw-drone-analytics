@@ -49,7 +49,9 @@ log = logging.getLogger("sitl_etl")
 
 PHASES_PATH = Path("sitl/mission_phases.json")
 WANTED = ("HEARTBEAT", "GLOBAL_POSITION_INT", "VFR_HUD", "GPS_RAW_INT", "SYS_STATUS", "MISSION_CURRENT",
-          "STATUSTEXT")
+          "STATUSTEXT", "WIND")
+WIND_LIMIT_MPS = 12.0     # the drone's policy: above this, return or land at once
+WIND_AVERAGE_S = 30       # a return decision on one gust would abort flights that are fine
 ARMED_FLAG = 128          # MAV_MODE_FLAG_SAFETY_ARMED
 VEHICLE = (1, 1)          # (system, component) of the autopilot; MAVProxy's own heartbeat is 255
 FROM_VEHICLE_ONLY = ("HEARTBEAT", "STATUSTEXT")
@@ -212,6 +214,33 @@ TOUCHDOWN = re.compile(r"SIM Hit ground at (-?[\d.]+) m/s")   # SITL only (SIM_A
 WARNING_SEVERITY = 3            # MAV_SEVERITY_ERROR and worse (0 emergency ... 3 error)
 
 
+def wind_estimate(messages: list[dict], start: float, end: float) -> dict | None:
+    """ArduPilot's own wind estimate (WIND message) from `start` (forward flight) to `end`.
+
+    What a 'wind above the limit -> return home' trigger would have seen: the estimate per second,
+    its WIND_AVERAGE_S-second mean, and when that mean first crossed WIND_LIMIT_MPS.
+    """
+    per_s: dict[int, float] = {}
+    for m in messages:
+        if m["msg"] == "WIND" and start <= m["t"] <= end:
+            per_s[int(m["t"])] = m["speed"]                # last estimate in each second
+    if not per_s:
+        return None
+    secs = sorted(per_s)
+    speeds = [per_s[s] for s in secs]
+    means = [statistics.fmean(speeds[max(0, i - WIND_AVERAGE_S + 1):i + 1]) for i in range(len(speeds))]
+    crossed = next((secs[i] for i in range(WIND_AVERAGE_S - 1, len(means)) if means[i] > WIND_LIMIT_MPS), None)
+    return {
+        "from": "forward flight",
+        "median_mps": round(statistics.median(speeds), 2),
+        "max_mps": round(max(speeds), 2),
+        f"max_{WIND_AVERAGE_S}s_mean_mps": round(max(means), 2),
+        "seconds_over_limit": sum(s > WIND_LIMIT_MPS for s in speeds),
+        f"{WIND_AVERAGE_S}s_mean_over_limit_after_s": None if crossed is None else round(crossed - start, 1),
+        "limit_mps": WIND_LIMIT_MPS,
+    }
+
+
 def flight_summary(messages: list[dict], rows: list[dict]) -> dict:
     """What the flight did, for the wind sweep: landing speed and place, battery, warnings.
 
@@ -233,6 +262,7 @@ def flight_summary(messages: list[dict], rows: list[dict]) -> dict:
     east = (last["lon"] - first["lon"]) * 111_320.0 * math.cos(math.radians(first["lat"]))
     cruise = [r["ground_speed_mps"] for r in rows if r["flight_mode"] in CRUISE_PHASES]
     return {
+        "wind_estimate": wind_estimate(messages, t0 if transition is None else transition, t1),
         "armed_s": len(rows),
         "start": first["timestamp"], "end": last["timestamp"],
         "phases_s": dict(Counter(r["flight_mode"] for r in rows)),
@@ -322,6 +352,11 @@ def main(argv: list[str] | None = None) -> int:
     log.info("landing: touchdown %s m/s, %.1f m from take-off; battery %s -> %s %%; warnings: %s",
              summary["touchdown_mps"] or "n/a", summary["landed_from_takeoff_m"],
              summary["battery_pct"]["start"], summary["battery_pct"]["end"], summary["warnings"] or "none")
+    if (w := summary["wind_estimate"]) is not None:
+        log.info("wind estimate: median %.1f, max %.1f m/s; %ds mean max %.1f; over %.0f m/s: %d s; "
+                 "%ds mean over the limit after %s s", w["median_mps"], w["max_mps"], WIND_AVERAGE_S,
+                 w[f"max_{WIND_AVERAGE_S}s_mean_mps"], WIND_LIMIT_MPS, w["seconds_over_limit"], WIND_AVERAGE_S,
+                 w[f"{WIND_AVERAGE_S}s_mean_over_limit_after_s"])
     if args.load:
         totals = load(args.out, args.db, args.api_url)
         log.info("loaded: sent=%d accepted=%d duplicates=%d rejected=%d",
