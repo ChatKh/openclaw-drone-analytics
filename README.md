@@ -32,19 +32,22 @@ was scored once.
 
 Flights from the real ArduPilot flight-control code ([below](#second-data-source-ardupilot-sitl))
 showed two assumptions that only held for the simulator, so the detectors changed (v3). The seed 7
-test set has now been seen, so v3 is scored once on a **new test set (seed 31, 30 days)**, frozen
-in the commit before it was scored.
+test set has now been seen, so v3 was scored once on a **new test set (seed 31: 30 days,
+60 flights, 24 planted faults)**, after v3 was frozen in commit `499c09f`.
 
 | | Dev set (seed 42) | SITL, calm (2 flights) | New test set (seed 31) |
 |---|---|---|---|
 | Rules v2 | 100% / 100% | 1 false alarm (battery) | not scored |
-| Rules v3 | 100% / 100%, same alerts | 0 false alarms, but the battery rule could not run* | *pending* |
+| Rules v3 | 100% / 100%, same alerts | 0 false alarms, but the battery rule could not run* | **100% / 100%**, 0 false alarms |
 | ML v2 envelope | 92% / 86% | 8 false alarms (all "too steady") | not scored |
-| ML v3 envelope | 92% / 86%, same alerts | 0 false alarms | *pending* |
+| ML v3 envelope | 92% / 86%, same alerts | 0 false alarms | **100% / 96%**, 0 false alarms |
 
-Precision / recall. \*v3 compares battery windows only inside cruise, which needs 480 s of it;
-the longer calm flight had 445 s. The wind-sweep flights are long enough. On 40 maximum-wind
-normal simulated flights v2 and v3 raise the same false alarms: 5 flights (3 battery, 2 altitude).
+Precision / recall. The one v3 miss on seed 31 is the same kind as on seed 7: ML missed a small
+altitude spike (25.1 m against a 20 m cruise), which the rules caught. 24 faults is still a small
+sample, so 100% means "none missed here", not "never misses". \*v3 compares battery windows only
+inside cruise, which needs 480 s of it; the longer calm flight had 445 s. The wind-sweep flights
+are long enough. On 40 maximum-wind normal simulated flights v2 and v3 raise the same false
+alarms: 5 flights (3 battery, 2 altitude).
 
 ![Recall by fault type, rules vs ML](docs/rule_vs_ml.svg)
 
