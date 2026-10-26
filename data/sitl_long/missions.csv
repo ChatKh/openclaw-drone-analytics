@@ -1,0 +1,2 @@
+mission_id,drone_id,role,start_time,end_time,planned_duration_min,actual_duration_min,mission_status
+D0002_S_AM,S,AM,2026-10-25 17:45:18,2026-10-25 17:54:09,8.9,8.9,completed
