@@ -1,2 +1,0 @@
-mission_id,drone_id,role,start_time,end_time,planned_duration_min,actual_duration_min,mission_status
-D0001_S_AM,S,AM,2026-10-25 17:21:22,2026-10-25 17:23:59,2.6,2.6,completed

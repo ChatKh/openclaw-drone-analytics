@@ -158,12 +158,15 @@ def run(cfg: Config, report: Report | None = None) -> Report:
             rule_detector.run(conn)
 
         with step("ML detector"):
-            if cfg.retrain or not cfg.model_path.exists():
+            bundle = None if cfg.retrain or not cfg.model_path.exists() else joblib.load(cfg.model_path)
+            if bundle is not None and bundle.get("version") != ml_detector.MODEL_VERSION:
+                log.info("model %s is version %s, code is %d: retraining", cfg.model_path,
+                         bundle.get("version", 2), ml_detector.MODEL_VERSION)
+                bundle = None
+            if bundle is None:
                 bundle = ml_detector.train(cfg.ml_flights, n_calib=cfg.ml_calib_flights)
                 cfg.model_path.parent.mkdir(parents=True, exist_ok=True)
                 joblib.dump(bundle, cfg.model_path)
-            else:
-                bundle = joblib.load(cfg.model_path)
             ml_detector.run(conn, bundle)
 
         with step("evaluate"):

@@ -62,6 +62,12 @@ def write_tlog(path: Path, battery_monitor: bool = True, transition_at: int | No
             put(t + 0.60, gcs, gcs.statustext_encode(6, b"Transition done"))      # not the vehicle
         if s == transition_at:
             put(t + 0.60, vehicle, vehicle.statustext_encode(6, b"Transition done"))
+        if s == 80:
+            put(t + 0.70, vehicle, vehicle.statustext_encode(2, b"EKF3 IMU0 yaw inconsistent"))
+        if s == 124:
+            put(t + 0.70, vehicle, vehicle.statustext_encode(6, b"SIM Hit ground at 0.480000 m/s"))
+        if s == 128:
+            put(t + 0.70, vehicle, vehicle.statustext_encode(2, b"PreArm: In landing sequence"))
     path.write_bytes(bytes(out))
 
 
@@ -174,9 +180,54 @@ def test_parameter_file_turns_the_battery_monitor_on():
     assert params["BATT_MONITOR"] == "4" and int(params["BATT_CAPACITY"]) > 0
 
 
+def test_flight_summary_reports_the_landing(tlog, rows):
+    s = E.flight_summary(list(E.extract(tlog)), rows)
+    assert s["touchdown_mps"] == [0.48]
+    assert s["transition_done_s"] == pytest.approx(TRANSITION_AT - 5, abs=1)  # armed from 5 s
+    assert s["warnings"] == ["EKF3 IMU0 yaw inconsistent"]             # PreArm after landing left out
+    assert s["armed_s"] == len(rows) and s["battery_pct"]["end"] < s["battery_pct"]["start"]
+    assert s["landed_from_takeoff_m"] == pytest.approx(120 * 1e-5 * 111_320, rel=0.02)  # drifted north
+
+
+def test_cli_writes_the_flight_summary(tlog, tmp_path):
+    assert E.main(["--tlog", str(tlog), "--mission-id", "D0001_S_AM", "--out", str(tmp_path),
+                   "--phases", str(ROOT / "sitl" / "mission_phases.json")]) == 0
+    import json
+    assert json.loads((tmp_path / "flight_summary.json").read_text())["touchdown_mps"] == [0.48]
+
+
+WIND = {"00": 0, "04": 4, "07": 7, "10": 10, "13": 13}   # one flight per operating band, fixed in advance
+
+
+def read_parm(path):
+    return dict(line.split()[:2] for line in path.read_text().splitlines()
+                if line.strip() and not line.startswith("#"))
+
+
+@pytest.mark.parametrize("name,speed", WIND.items())
+def test_wind_files(name, speed):
+    p = read_parm(ROOT / "sitl" / "wind" / f"wind_{name}.parm")
+    assert float(p["SIM_WIND_SPD"]) == speed
+    assert float(p["SIM_WIND_TURB"]) == pytest.approx(0.3 * speed)      # same gustiness for every speed
+    assert p["SIM_WIND_DIR"] == "180" and p["SIM_WIND_T"] == "1"        # same direction, full speed at 40 m
+    assert int(p["BATT_CAPACITY"]) == 10000                             # same pack for every speed
+
+
+def test_wind_mission_is_long_enough_for_the_battery_rule():
+    # cruise must exceed 2 x (180 + 60) = 480 s; the SITL QuadPlane cruised at ~25.7 m/s
+    import math
+    items = [line.split("\t") for line in (ROOT / "sitl" / "survey_wind.waypoints").read_text().splitlines()[1:]]
+    home = (float(items[0][8]), float(items[0][9]))
+    pts = [home] + [(float(i[8]), float(i[9])) for i in items[2:-1]] + [home]
+    metres = sum(math.hypot((b[0] - a[0]) * 111_320, (b[1] - a[1]) * 111_320 * math.cos(math.radians(a[0])))
+                 for a, b in zip(pts, pts[1:]))
+    assert metres / 25.7 > 600
+
+
 MISSIONS = {  # mission file -> its phase map
     "survey.waypoints": "mission_phases.json",
     "survey_long.waypoints": "survey_long.phases.json",
+    "survey_wind.waypoints": "survey_wind.phases.json",
 }
 PHASE_ORDER = ["takeoff", "transit_out", "survey", "transit_back", "landing"]
 
@@ -205,7 +256,8 @@ def test_values_belong_to_their_own_second(rows):
 
 
 REAL_FLIGHTS = sorted((ROOT / "sitl" / "flights").glob("*.tlog")) if (ROOT / "sitl" / "flights").exists() else []
-PHASES_FOR_FLIGHT = {"survey_short": "mission_phases.json", "survey_long": "survey_long.phases.json"}
+PHASES_FOR_FLIGHT = {"survey_short": "mission_phases.json", "survey_long": "survey_long.phases.json",
+                     **{f"survey_wind_{w}": "survey_wind.phases.json" for w in WIND}}
 
 
 @pytest.mark.skipif(not REAL_FLIGHTS, reason="no recorded SITL flight in sitl/flights/")

@@ -36,7 +36,11 @@ import argparse
 import csv
 import json
 import logging
+import math
+import re
+import statistics
 import sys
+from collections import Counter
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Iterable, Iterator
@@ -204,6 +208,44 @@ def diagnose(messages: list[dict]) -> list[str]:
     return reasons
 
 
+TOUCHDOWN = re.compile(r"SIM Hit ground at (-?[\d.]+) m/s")   # SITL only (SIM_Aircraft.cpp)
+WARNING_SEVERITY = 3            # MAV_SEVERITY_ERROR and worse (0 emergency ... 3 error)
+
+
+def flight_summary(messages: list[dict], rows: list[dict]) -> dict:
+    """What the flight did, for the wind sweep: landing speed and place, battery, warnings.
+
+    Not part of the telemetry schema (no detector reads it); written next to the CSV files.
+    """
+    if not rows:
+        return {}
+    def unix(row) -> float:
+        return datetime.strptime(row["timestamp"], TS).replace(tzinfo=timezone.utc).timestamp()
+    t0, t1 = unix(rows[0]), unix(rows[-1]) + 2      # the armed flight, plus the disarm itself
+    texts = [m for m in messages if m["msg"] == "STATUSTEXT" and t0 <= m["t"] <= t1]
+    touchdowns = [round(float(x.group(1)), 2) for m in texts if (x := TOUCHDOWN.search(m["text"]))]
+    transition = next((m["t"] for m in texts if is_transition_done(m)), None)
+    # PreArm messages after landing are about arming again, not about this flight
+    warnings = list(dict.fromkeys(m["text"] for m in texts
+                                  if m["severity"] <= WARNING_SEVERITY and not m["text"].startswith("PreArm")))
+    first, last = rows[0], rows[-1]
+    north = (last["lat"] - first["lat"]) * 111_320.0
+    east = (last["lon"] - first["lon"]) * 111_320.0 * math.cos(math.radians(first["lat"]))
+    cruise = [r["ground_speed_mps"] for r in rows if r["flight_mode"] in CRUISE_PHASES]
+    return {
+        "armed_s": len(rows),
+        "start": first["timestamp"], "end": last["timestamp"],
+        "phases_s": dict(Counter(r["flight_mode"] for r in rows)),
+        "transition_done_s": None if transition is None else round(transition - t0, 1),
+        "battery_pct": {"start": first["battery_cruise_pct"], "end": last["battery_cruise_pct"]},
+        "cruise_ground_speed_mps": None if not cruise else
+            {"min": min(cruise), "median": statistics.median(cruise), "max": max(cruise)},
+        "touchdown_mps": touchdowns,             # every ground contact after take-off, last = landing
+        "landed_from_takeoff_m": round(math.hypot(north, east), 1),
+        "warnings": warnings[:20],
+    }
+
+
 def mission_row(rows: list[dict], mission_id: str) -> dict:
     start, end = rows[0]["timestamp"], rows[-1]["timestamp"]
     minutes = round(len(rows) / 60, 1)
@@ -273,11 +315,13 @@ def main(argv: list[str] | None = None) -> int:
             log.error("  - %s", reason)
         return 1
     write_dataset(rows, args.out, args.mission_id)
-    phases = {}
-    for r in rows:
-        phases[r["flight_mode"]] = phases.get(r["flight_mode"], 0) + 1
+    summary = flight_summary(messages, rows)
+    (args.out / "flight_summary.json").write_text(json.dumps(summary, indent=1) + "\n", encoding="utf-8")
     log.info("%d rows (%s to %s) -> %s  phases %s", len(rows), rows[0]["timestamp"],
-             rows[-1]["timestamp"], args.out, phases)
+             rows[-1]["timestamp"], args.out, summary["phases_s"])
+    log.info("landing: touchdown %s m/s, %.1f m from take-off; battery %s -> %s %%; warnings: %s",
+             summary["touchdown_mps"] or "n/a", summary["landed_from_takeoff_m"],
+             summary["battery_pct"]["start"], summary["battery_pct"]["end"], summary["warnings"] or "none")
     if args.load:
         totals = load(args.out, args.db, args.api_url)
         log.info("loaded: sent=%d accepted=%d duplicates=%d rejected=%d",

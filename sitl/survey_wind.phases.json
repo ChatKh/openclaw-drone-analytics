@@ -1,0 +1,32 @@
+{
+ "_note": "Flight phase of the leg flown TOWARD each waypoint (MISSION_CURRENT.seq). Mission: sitl/survey_wind.waypoints (12 survey lines of 1000 m, 200 m apart, 40 m above home; ~17.7 km). For the wind sweep: long enough that cruise exceeds the 480 s the battery rule needs even with a tailwind.",
+ "toward_waypoint": {
+  "1": "takeoff",
+  "2": "transit_out",
+  "3": "survey",
+  "4": "survey",
+  "5": "survey",
+  "6": "survey",
+  "7": "survey",
+  "8": "survey",
+  "9": "survey",
+  "10": "survey",
+  "11": "survey",
+  "12": "survey",
+  "13": "survey",
+  "14": "survey",
+  "15": "survey",
+  "16": "survey",
+  "17": "survey",
+  "18": "survey",
+  "19": "survey",
+  "20": "survey",
+  "21": "survey",
+  "22": "survey",
+  "23": "survey",
+  "24": "survey",
+  "25": "survey",
+  "26": "transit_back",
+  "27": "landing"
+ }
+}

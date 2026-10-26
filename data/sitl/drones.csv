@@ -1,2 +1,0 @@
-drone_id,model,firmware,battery_health_pct,payload_type,max_flight_time_min,status
-S,ArduPlane QuadPlane (SITL),ArduPlane SITL,100,none,30,simulated

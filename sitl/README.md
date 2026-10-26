@@ -8,13 +8,16 @@ schema, API and database as the simulator's data. Nothing downstream changes.
 |---|---|
 | `survey.waypoints` + `mission_phases.json` | short mission: VTOL takeoff to 40 m, one survey loop, VTOL landing (~2.5 min armed) |
 | `survey_long.waypoints` + `survey_long.phases.json` | long mission: 8 survey lines of 1000 m, 200 m apart (~12 km, ~11 min armed). Long enough for the battery rule, which needs 2 x (180 + 60) s of data |
+| `survey_wind.waypoints` + `survey_wind.phases.json` | wind-sweep mission: 12 survey lines (~17.7 km). Cruise stays above the 480 s the battery rule needs even with a tailwind |
 | `sitl.parm` | parameters on top of ArduPilot's quadplane defaults: the battery monitor on |
+| `wind/wind_XX.parm` | one per wind band (0 / 4 / 7 / 10 / 13 m/s), layered after `sitl.parm` |
 | `flights/*.tlog` | recorded flights, kept in git; the tests run the ETL on them |
 
 | Flight | Mission | Mission id | Phase map |
 |---|---|---|---|
 | `flights/survey_short.tlog` | `survey.waypoints` | `D0001_S_AM` | `mission_phases.json` |
 | `flights/survey_long.tlog` | `survey_long.waypoints` | `D0002_S_AM` | `survey_long.phases.json` |
+| `flights/survey_wind_00.tlog` ... `_13.tlog` | `survey_wind.waypoints` | `D0010_S_AM` ... `D0014_S_AM` | `survey_wind.phases.json` |
 
 ## Fly
 
@@ -91,7 +94,60 @@ changed the code or the setup, and has a test.
 3. **One-second lag** (found by the test written for 2). A row was built when the next second's
    first message arrived, before that second's messages were applied, so every row carried the
    previous second's values. Fixed; `test_values_belong_to_their_own_second`.
-4. **Battery drains about 7x faster than the simulator assumes**: cruise slope ~0.10 %/s with
-   ArduPilot's default 3300 mAh, against `CRUISE_DRAIN_PER_S` = 0.0136 %/s in the battery rule.
-   The short flight is too short for the battery rule to run at all (159 s of data, it needs 480 s);
-   the long mission tests it with the pack unchanged.
+4. **Battery drains about 7x faster than the simulator assumes** (long flight: 99 % to 29 % in
+   532 s). v2's battery rule had the simulator's drain fixed in the code (0.0136 %/s) and raised a
+   false alarm (score 32.9). Its 'before' window also reached into the VTOL takeoff, which drains
+   faster still. v3 learns the drain per flight (median drop per 60 s of cruise: 0.10 %/s here,
+   0.0137 %/s on simulated flights) and compares only windows inside cruise.
+   Caveat: that needs 480 s of cruise and this flight had 445 s, so under v3 the battery rule made
+   no check at all here. Its 0 false alarms on these flights is not a pass; the wind sweep tests it.
+5. **Steadier than any simulated flight** (long flight). No wind and almost no sensor noise:
+   `speed_std` went down to 0.02 m/s against at least 0.154 in normal simulated flights. The
+   two-sided envelope flagged 18 of 42 windows as 8 'sensor' alerts, all for being *below* normal.
+   A guess that the 180-degree turns caused them was wrong: the turn windows were the least steady.
+   v3: one-sided envelope (each feature alarms only on the side a fault pushes it).
+
+| Flight | Rules v2 | Rules v3 | ML v2 | ML v3 |
+|---|---|---|---|---|
+| short (158 s armed) | 0 | 0 (battery rule not run) | 1, then 0 after finding 2 | 0 |
+| long (532 s armed) | 1 battery | 0 (battery rule not run) | 8 sensor | 0 |
+
+## Wind sweep
+
+One flight per operating band of the drone, speeds fixed before any wind flight:
+
+| File | Wind | Band |
+|---|---|---|
+| `wind/wind_00.parm` | 0 m/s | calm baseline: same mission and pack as the others |
+| `wind/wind_04.parm` | 4 m/s | 0-5: flies for sure |
+| `wind/wind_07.parm` | 7 m/s | 5-8: needs a skilled pilot |
+| `wind/wind_10.parm` | 10 m/s | 8-12: may crash, still flyable |
+| `wind/wind_13.parm` | 13 m/s | above 12: expected to crash in real life |
+
+Every file: gusts (`SIM_WIND_TURB`, about the standard deviation) 30 % of the mean, wind from the
+south, full speed at every height, a 10000 mAh pack so the long mission does not run the battery flat.
+These are settings of the test, not of the detectors, and nothing is tuned after the sweep: the
+results are reported as they come out. What SITL can and cannot say: it runs the real autopilot
+against a simple wind model and an ideal airframe, so it shows how the detectors and the autopilot
+behave, not whether the real drone survives the wind.
+
+```bash
+W=07   # 00, 04, 07, 10, 13
+mkdir -p ~/sitl-runs/wind_$W && cd ~/sitl-runs/wind_$W
+~/ardupilot/Tools/autotest/sim_vehicle.py -v ArduPlane -f quadplane --console --map -w \
+    --add-param-file=/home/dev/openclaw-drone-analytics/sitl/sitl.parm \
+    --add-param-file=/home/dev/openclaw-drone-analytics/sitl/wind/wind_$W.parm
+```
+
+In MAVProxy: `param show SIM_WIND_SPD` (must match), `wp load .../sitl/survey_wind.waypoints`,
+`wp list` (28 items), `mode AUTO`, `arm throttle`. Then, in the project:
+
+```bash
+W=07; M=D0012_S_AM   # 00: D0010  04: D0011  07: D0012  10: D0013  13: D0014
+cp ~/sitl-runs/wind_$W/mav.tlog sitl/flights/survey_wind_$W.tlog
+python -m src.etl.sitl_tlog --tlog sitl/flights/survey_wind_$W.tlog --mission-id $M \
+    --phases sitl/survey_wind.phases.json --out data/sitl_wind_$W --load --db data/sitl.db
+```
+
+The ETL also writes `flight_summary.json`: touchdown speed (SITL's "SIM Hit ground" message), how
+far from take-off it landed, battery used, and any warning ArduPilot raised.

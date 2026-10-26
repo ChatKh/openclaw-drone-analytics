@@ -1,0 +1,16 @@
+# Wind sweep flight: 4 m/s, band 0-5 m/s: flies for sure.
+# Bands are the operating limits the drone is designed for; the speeds were fixed BEFORE any
+# wind flight was flown, one per band, so they are not chosen to suit the detectors.
+# Use after sitl.parm:  --add-param-file=<repo>/sitl/sitl.parm --add-param-file=<repo>/sitl/wind/wind_04.parm
+SIM_WIND_SPD    4
+# gusts: SITL's turbulence, about its standard deviation in m/s (SIM_Aircraft::update_wind).
+# 30 % of the mean speed: our assumption for rough terrain such as a plantation, the same for every flight
+SIM_WIND_TURB   1.2
+SIM_WIND_TC     5
+# from the south: tailwind going north, headwind coming home, crosswind on the survey lines
+SIM_WIND_DIR    180
+# 1 = no height limit: full speed at every height (the default 0 weakens wind below 60 m, so 40 m would get less)
+SIM_WIND_T      1
+# A bigger pack than sitl.parm's 3300 mAh, so the longer mission does not run the battery flat
+# in strong wind (v3's battery rule learns the drain per flight, so the pack size does not bias it).
+BATT_CAPACITY   10000

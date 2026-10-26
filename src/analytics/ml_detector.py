@@ -77,6 +77,18 @@ FEATURES = {
 }
 TYPES = list(FEATURES.values())
 
+# v3: which side of the normal range is a fault. Every fault we look for makes a feature
+# worse in ONE direction (more wobble, worse HDOP, fewer satellites, faster drain, lower
+# VTOL pack). Unusually steady flight is not a fault: the SITL QuadPlane (no wind, almost
+# no sensor noise) flies steadier than any simulated flight, and a two-sided envelope
+# raised 8 false alarms on it, all for speed_std BELOW normal.
+SIDES = {
+    "alt_std": "high", "alt_max_dev": "high", "speed_std": "high",
+    "hdop_mean": "high", "hdop_max": "high", "sats_min": "low",
+    "cruise_slope": "high", "cruise_max_step": "high", "vtol_pct": "low",
+}
+MODEL_VERSION = 3   # 2: two-sided envelope; 3: one-sided (SIDES)
+
 
 def window_features(rows) -> list[tuple[str, str, list[float]]]:
     """(window start, window end, feature vector) for each cruise window of one flight."""
@@ -124,6 +136,10 @@ def _excess(X: np.ndarray, bundle: dict, margin: float) -> np.ndarray:
     down_span = np.maximum(med - lo, 1e-6)
     above = (X - (hi + margin * up_span)) / up_span
     below = ((lo - margin * down_span) - X) / down_span
+    sides = bundle.get("sides")                     # a v2 bundle has none: two-sided
+    if sides is not None:
+        above = np.where([sides[f] == "high" for f in FEATURES], above, 0.0)
+        below = np.where([sides[f] == "low" for f in FEATURES], below, 0.0)
     return np.maximum(np.maximum(above, below), 0.0)
 
 
@@ -137,6 +153,8 @@ def train(n_flights: int = 100, seed: int = 9000, n_calib: int = 100, calib_seed
         "low": X.min(axis=0),
         "high": X.max(axis=0),
         "features": list(FEATURES),
+        "sides": dict(SIDES),
+        "version": MODEL_VERSION,
         "trained_on": {"flights": n_flights, "seed": seed, "windows": len(X)},
     }
 
@@ -246,9 +264,14 @@ def main() -> None:
     if not MODEL_PATH.exists():
         log.error("%s not found. Train first: python -m src.analytics.ml_detector train", MODEL_PATH)
         raise SystemExit(2)
+    bundle = joblib.load(MODEL_PATH)
+    if bundle.get("version") != MODEL_VERSION:
+        log.error("%s is a version %s model; this code is version %d. Retrain: "
+                  "python -m src.analytics.ml_detector train", MODEL_PATH, bundle.get("version", 2), MODEL_VERSION)
+        raise SystemExit(2)
     conn = connect()
     try:
-        alerts = run(conn, joblib.load(MODEL_PATH), args.mode)
+        alerts = run(conn, bundle, args.mode)
     finally:
         conn.close()
     for a in alerts:

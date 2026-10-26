@@ -1,7 +1,10 @@
 """
-Rule-based detector v2 (Phase 5, day 9): rules that look at the SHAPE of a signal,
-not only its size, so normal disturbances (wind gusts, GPS multipath) are not
-mistaken for faults.
+Rule-based detector v3: rules that look at the SHAPE of a signal, not only its size,
+so normal disturbances (wind gusts, GPS multipath) are not mistaken for faults.
+
+v3 (after the SITL flights): the battery rule learns the normal drain from the flight
+itself (flight_drain_per_s) instead of a fixed 0.0136 %/s, and compares only windows
+that lie inside cruise. v2 is v3 with the fixed drain and no cruise check.
 
 Reads telemetry_logs and missions only. Writes rows to alerts with
 detector = 'rule'. Running it again replaces the previous rule alerts.
@@ -12,7 +15,7 @@ Rules (all thresholds in RuleConfig):
            Gust sag only pushes the reading down for a while, so the highest
            reading in a window ignores it. Compare the highest reading in a
            window before with the highest reading in a window after; a drop
-           larger than normal drain + battery_drop_pct is a fault.
+           larger than this flight's normal drain + battery_drop_pct is a fault.
   gps      satellite_count < min_satellites or hdop > max_hdop, held for at
            least gps_min_s seconds (multipath under canopy lasts 5-25 s).
   sensor   one altitude reading far from its neighbours, measured against how
@@ -36,7 +39,6 @@ from src.db.database import connect, init_db
 log = logging.getLogger("rule_detector")
 
 TS = "%Y-%m-%d %H:%M:%S"
-CRUISE_DRAIN_PER_S = 0.0136  # normal cruise battery drain, % per second
 CRUISE_MODES = ("transit_out", "survey", "transit_back")
 
 
@@ -86,13 +88,35 @@ def _group(flags: list[tuple[str, float]], gap_s: int) -> list[tuple[str, str, f
     return runs
 
 
+def flight_drain_per_s(rows, lag_s: int = 60) -> float | None:
+    """This flight's normal cruise drain (% per second): the median drop over `lag_s` seconds.
+
+    A fault is a step that stays down, so it moves only the few lag pairs that straddle it;
+    the median of all pairs is the drain the flight shows the rest of the time. Measured per
+    flight, it fits any pack and airframe: the simulator drains 0.0136 %/s, the SITL QuadPlane
+    with ArduPilot's default 3300 mAh pack about 0.13 %/s (v2 had the simulator's value fixed in
+    the code, and alarmed on the first long SITL flight).
+    """
+    c = [r["battery_cruise_pct"] for r in rows]
+    cruise = [r["flight_mode"] in CRUISE_MODES for r in rows]
+    # an empty pack reads 0 from then on: those flat pairs would make the drain look like 0
+    pairs = [(c[j] - c[j + lag_s]) / lag_s for j in range(len(c) - lag_s)
+             if cruise[j] and cruise[j + lag_s] and c[j + lag_s] > 0]
+    return max(0.0, statistics.median(pairs)) if pairs else None
+
+
 def _battery_flags(rows, cfg: RuleConfig) -> list[tuple[str, float]]:
     c = [r["battery_cruise_pct"] for r in rows]
     w, g = cfg.battery_window_s, cfg.battery_gap_s
-    expected = CRUISE_DRAIN_PER_S * (w + 2 * g)  # normal drain between the two window starts
+    drain = flight_drain_per_s(rows)
+    if drain is None:
+        return []
+    expected = drain * (w + 2 * g)  # normal drain between the two window starts
+    cruise = [r["flight_mode"] in CRUISE_MODES for r in rows]
     flags = []
     for i in range(w + g, len(c) - g - w, cfg.battery_step_s):
-        if rows[i]["flight_mode"] not in CRUISE_MODES:
+        # both windows inside cruise: takeoff and landing drain at another (VTOL) rate
+        if not (cruise[i - g - w] and cruise[i + g + w - 1] and cruise[i]):
             continue
         before = max(c[i - g - w:i - g])
         after = max(c[i + g:i + g + w])
