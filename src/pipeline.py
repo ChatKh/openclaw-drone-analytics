@@ -26,7 +26,6 @@ from contextlib import contextmanager
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 
-import joblib
 
 from src.analytics import ml_detector, rule_detector
 from src.db.database import connect, init_db
@@ -158,15 +157,7 @@ def run(cfg: Config, report: Report | None = None) -> Report:
             rule_detector.run(conn)
 
         with step("ML detector"):
-            bundle = None if cfg.retrain or not cfg.model_path.exists() else joblib.load(cfg.model_path)
-            if bundle is not None and bundle.get("version") != ml_detector.MODEL_VERSION:
-                log.info("model %s is version %s, code is %d: retraining", cfg.model_path,
-                         bundle.get("version", 2), ml_detector.MODEL_VERSION)
-                bundle = None
-            if bundle is None:
-                bundle = ml_detector.train(cfg.ml_flights, n_calib=cfg.ml_calib_flights)
-                cfg.model_path.parent.mkdir(parents=True, exist_ok=True)
-                joblib.dump(bundle, cfg.model_path)
+            bundle = ml_detector.load_or_train(cfg.model_path, cfg.ml_flights, cfg.ml_calib_flights, cfg.retrain)
             ml_detector.run(conn, bundle)
 
         with step("evaluate"):

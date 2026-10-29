@@ -262,7 +262,8 @@ def flight_summary(messages: list[dict], rows: list[dict]) -> dict:
     east = (last["lon"] - first["lon"]) * 111_320.0 * math.cos(math.radians(first["lat"]))
     cruise = [r["ground_speed_mps"] for r in rows if r["flight_mode"] in CRUISE_PHASES]
     return {
-        "wind_estimate": wind_estimate(messages, t0 if transition is None else transition, t1),
+        # ArduPilot estimates wind only once it flies on the wing: none before forward flight
+        "wind_estimate": None if transition is None else wind_estimate(messages, transition, t1),
         "armed_s": len(rows),
         "start": first["timestamp"], "end": last["timestamp"],
         "phases_s": dict(Counter(r["flight_mode"] for r in rows)),

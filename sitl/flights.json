@@ -1,0 +1,29 @@
+{
+ "_note": "Every recorded SITL flight and how to load it. python -m src.etl.sitl_rebuild reads this file. status 'flown': the mission was completed and goes into the detector database; any other status is summarised in sitl/RESULTS.md but not loaded. Paths are relative to sitl/. start_heading_deg: 353 is SITL's CMAC default; 180 faces the wind (sim_vehicle.py -l -35.363261,149.165230,584,180).",
+ "flights": [
+  {"file": "flights/survey_short.tlog", "mission_id": "D0001_S_AM", "phases": "mission_phases.json",
+   "params": "sitl.parm", "wind_mps": 0, "start_heading_deg": 353, "status": "flown",
+   "note": "first flight with the battery monitor on"},
+  {"file": "flights/survey_long.tlog", "mission_id": "D0002_S_AM", "phases": "survey_long.phases.json",
+   "params": "sitl.parm", "wind_mps": 0, "start_heading_deg": 353, "status": "flown",
+   "note": "cruise 445 s: too short for the battery rule"},
+  {"file": "flights/survey_wind_00.tlog", "mission_id": "D0010_S_AM", "phases": "survey_wind.phases.json",
+   "params": "wind/wind_00.parm", "wind_mps": 0, "start_heading_deg": 353, "status": "flown",
+   "note": "wind sweep: calm baseline"},
+  {"file": "flights/survey_wind_4.9.tlog", "mission_id": "D0011_S_AM", "phases": "survey_wind.phases.json",
+   "params": "wind/wind_4.9.parm", "wind_mps": 4.9, "start_heading_deg": 353, "status": "flown",
+   "note": "re-flown: the first attempt was stopped by hand during the landing descent (log not kept)"},
+  {"file": "flights/failed/survey_wind_7.9_no_liftoff.tlog", "mission_id": "D0015_S_AM", "phases": "survey_wind.phases.json",
+   "params": "wind/wind_7.9.parm", "wind_mps": 7.9, "start_heading_deg": 353, "status": "no_liftoff",
+   "note": "tail to the wind: never above 0.3 m in 11 min at full lift throttle"},
+  {"file": "flights/survey_wind_7.9.tlog", "mission_id": "D0012_S_AM", "phases": "survey_wind.phases.json",
+   "params": "wind/wind_7.9.parm", "wind_mps": 7.9, "start_heading_deg": 180, "status": "flown",
+   "note": "same settings facing the wind: mission flown"},
+  {"file": "flights/survey_wind_12.tlog", "mission_id": "D0013_S_AM", "phases": "survey_wind.phases.json",
+   "params": "wind/wind_12.parm", "wind_mps": 12, "start_heading_deg": 180, "status": "flown",
+   "note": "top of the 8-12 m/s band"},
+  {"file": "flights/failed/survey_wind_13_could_not_descend.tlog", "mission_id": "D0014_S_AM", "phases": "mission_phases.json",
+   "params": "wind/wind_13.parm", "wind_mps": 13, "start_heading_deg": 180, "status": "could_not_land",
+   "note": "short mission; the vertical landing never got down: stopped after 23 min of descent, 170 m up. A first attempt (stopped after 4.5 min, same behaviour) was not kept"}
+ ]
+}

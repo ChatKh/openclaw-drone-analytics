@@ -204,6 +204,15 @@ def test_no_wind_messages_no_wind_estimate():
     assert E.wind_estimate([], 0, 100) is None
 
 
+def test_no_forward_flight_no_wind_estimate(tmp_path):
+    # the 7.9 m/s tail-to-wind flight never left the ground; ArduPilot's estimate there reads 0
+    path = tmp_path / "no_transition.tlog"
+    write_tlog(path, transition_at=None)
+    msgs = list(E.extract(path))
+    rows = E.transform(msgs, E.load_phases(ROOT / "sitl" / "mission_phases.json"), "D0001_S_AM")
+    assert E.flight_summary(msgs, rows)["wind_estimate"] is None
+
+
 def test_cli_writes_the_flight_summary(tlog, tmp_path):
     assert E.main(["--tlog", str(tlog), "--mission-id", "D0001_S_AM", "--out", str(tmp_path),
                    "--phases", str(ROOT / "sitl" / "mission_phases.json")]) == 0
@@ -278,18 +287,17 @@ def test_values_belong_to_their_own_second(rows):
     assert by_sec[5]["flight_mode"] == "takeoff"                     # the first armed second has a row
 
 
-REAL_FLIGHTS = sorted((ROOT / "sitl" / "flights").glob("*.tlog")) if (ROOT / "sitl" / "flights").exists() else []
-PHASES_FOR_FLIGHT = {"survey_short": "mission_phases.json", "survey_long": "survey_long.phases.json",
-                     **{f"survey_wind_{w}": ("mission_phases.json" if m == "survey" else f"{m}.phases.json")
-                        for w, m in WIND_MISSION.items()}}
+import json
+
+FLOWN = [f for f in json.loads((ROOT / "sitl" / "flights.json").read_text())["flights"] if f["status"] == "flown"]
 
 
-@pytest.mark.skipif(not REAL_FLIGHTS, reason="no recorded SITL flight in sitl/flights/")
-@pytest.mark.parametrize("flight", REAL_FLIGHTS, ids=lambda p: p.name)
+@pytest.mark.parametrize("flight", FLOWN, ids=lambda f: Path(f["file"]).name)
 def test_recorded_sitl_flight_loads_cleanly(flight, tmp_path):
-    msgs = list(E.extract(flight))
+    """Every completed flight in sitl/flights.json: full phase order, battery reported, loads cleanly."""
+    msgs = list(E.extract(ROOT / "sitl" / flight["file"]))
     assert any(E.is_transition_done(m) for m in msgs)              # QuadPlane: phases use the transition
-    rows = E.transform(msgs, E.load_phases(ROOT / "sitl" / PHASES_FOR_FLIGHT[flight.stem]), "D0001_S_AM")
+    rows = E.transform(msgs, E.load_phases(ROOT / "sitl" / flight["phases"]), flight["mission_id"])
     assert len(rows) > 60
     order = []
     for r in rows:
@@ -297,5 +305,6 @@ def test_recorded_sitl_flight_loads_cleanly(flight, tmp_path):
             order.append(r["flight_mode"])
     assert order == PHASE_ORDER
     assert rows[-1]["battery_cruise_pct"] < rows[0]["battery_cruise_pct"]   # battery monitor was on
-    E.write_dataset(rows, tmp_path, "D0001_S_AM")
+    assert E.flight_summary(msgs, rows)["touchdown_mps"]                     # it landed
+    E.write_dataset(rows, tmp_path, flight["mission_id"])
     assert E.load(tmp_path, tmp_path / "x.db").rejected == 0

@@ -82,7 +82,7 @@ Without Docker (Python 3.10+):
 ```bash
 python3 -m venv .venv && source .venv/bin/activate
 pip install -r requirements.txt
-python -m pytest -q                 # 190 tests
+python -m pytest -q                 # 200 tests
 python -m src.pipeline --fresh      # whole pipeline on the dev set, ~15 s (+40 s the first time to train ML)
 streamlit run src/dashboard/app.py
 ```
@@ -158,7 +158,8 @@ satellites); a flight steadier than normal is not a fault.
 
 The same QuadPlane mission flown by ArduPilot's real flight-control code in software-in-the-loop.
 `src/etl/sitl_tlog.py` turns its MAVLink log into the same schema, so the API, database,
-detectors and dashboard run unchanged. Two recorded flights are in `sitl/flights/`.
+detectors and dashboard run unchanged. Eight recorded flights: six completed (`sitl/flights/`) and
+two that did not (`sitl/flights/failed/`), kept because they are results too.
 
 What it found that the simulator's own data could not (details and numbers in
 [`sitl/README.md`](sitl/README.md#findings-log)):
@@ -171,9 +172,38 @@ What it found that the simulator's own data could not (details and numbers in
 5. With no wind and no sensor noise the flight was steadier than any simulated one; the two-sided
    envelope flagged 18 of 42 windows. (v3: one-sided.)
 
-Next: a wind sweep (`sitl/wind/`): calm, then the upper edge of each flyable band (4.9 / 7.9 / 12 m/s),
-and a short 13 m/s flight that checks whether ArduPilot's wind estimate would show the 12 m/s
-return limit was crossed. Speeds fixed before any windy flight; results reported as they come out.
+### Wind sweep: calm to 13 m/s
+
+The drone is meant to fly in up to 12 m/s and return or land above that. Each flyable band was
+flown at its upper edge (4.9 / 7.9 / 12 m/s) after a calm flight, plus a short 13 m/s flight;
+speeds fixed before any windy flight, nothing tuned after. One flight per speed, so each result is a
+direction. Full table: [`sitl/RESULTS.md`](sitl/RESULTS.md), generated from the logs by
+`python -m src.etl.sitl_rebuild`.
+
+| Wind (m/s) | Outcome | Touchdown (m/s) | Rules v3 alerts | ML v3 alerts |
+|---|---|---|---|---|
+| 0 | completed | 0.50 | 0 | 0 |
+| 4.9 | completed | 0.46 | 0 | 0 |
+| 7.9, tail to the wind | never lifted off (0.3 m in 11 min) | - | - | - |
+| 7.9, facing the wind | completed | 0.67 | 0 | 1 |
+| 12 | completed, landing took 203 s | 1.93 | 0 | 12 |
+| 13 | could not land: climbed to 172 m in 23 min of descent | - | - | - |
+
+6. A QuadPlane has to take off facing the wind: one change, the start heading, turned "never
+   lifted off" into a completed mission.
+7. In wind, altitude takes 30-50 s to settle after the transition (the 7.9 m/s ML alert).
+8. Ground speed carries the wind: at 12 m/s it swings with heading, and the ML envelope, trained on
+   the simulator's milder weather, raised 12 false alarms, one per survey line. The rules raised
+   none from 0 to 12 m/s, with the battery rule checking 35-65 times per flight.
+9. ArduPilot's wind estimate is close (4.9, 7.9) but reads 0.4 m/s high at 12 and 13 m/s and hides
+   gusts. A "return above 12 m/s" trigger on its 30 s mean would have aborted the 12 m/s flight
+   after 55 s: a trigger needs a margin, or separate warn and return levels.
+10. Touchdown speed rises with wind: about 4x calm at 12 m/s.
+11. At 13 m/s the vertical landing never got down, using little battery: most likely the wing lifting
+    the hovering aircraft. If the rule above 12 m/s is "land at once", a vertical landing may not be
+    available.
+
+Findings 7 and 8 were not fixed: a change would be detector v4, scored on yet another new test set.
 
 ## The AI agent, and why its guardrails live in code
 
@@ -218,10 +248,11 @@ every time. Safety has to sit outside the model.
 | Fail loudly | The pipeline exits non-zero when counts do not add up; CI fails when results drop |
 | Add a second data source before trusting the detectors | Data from real flight-control code broke two assumptions the simulator could never have shown |
 | New test set after changing the detectors | A second look at a seen test set would make the score a tuning result |
+| Keep the flights that failed, and rebuild results from logs | A table typed from memory drifts; one command regenerates `sitl/RESULTS.md` from the committed logs |
 
 ## Testing and CI
 
-190 tests: API validation, database constraints, simulator, each detector on cases with
+200 tests: API validation, database constraints, simulator, each detector on cases with
 known answers, evaluator, dashboard pages (including empty data), agent guardrails with 14
 attack queries, and an integration test that runs the whole system on three simulated days
 and checks every part reports the same numbers.
@@ -235,7 +266,11 @@ inside `docker compose`.
 - Synthetic data. The detectors are tuned to this simulator's idea of a fault; real faults
   will look different. SITL runs real flight-control code, but its airframe, wind and sensors
   are models too, and its flights so far carry no planted fault.
-- Small numbers: 14 dev and 16 test faults; two calm SITL flights.
+- Small numbers: 14 dev and 16 test faults (24 on the v3 test set); one SITL flight per wind speed.
+- SITL's wind model applies the same turbulence vertically as horizontally and puts full wind speed
+  at ground level; its QuadPlane is a generic airframe with no structural model.
+- The ML envelope only knows the weather it was trained on: at 12 m/s in SITL it raised a false
+  alarm on every survey line (ground speed swinging with heading).
 - Strong wind can still trip the rules: the one test-set false alarm was an altitude alert at
   near-maximum wind, and in a stress run 5 of 40 maximum-wind normal flights raised a false
   alert (3 battery, 2 altitude), the same with v2 and v3. (An earlier version of this README
@@ -256,8 +291,8 @@ src/evaluation/   evaluator, threshold sweep, rule vs ML comparison, results gat
 src/dashboard/    Streamlit pages and their SQL
 src/agent/        bin/fleet: the agent's read-only CLI
 src/pipeline.py   the whole pipeline in one command
-src/etl/          ArduPilot SITL MAVLink log -> the same telemetry schema
-sitl/             SITL missions, parameter files, wind sweep, recorded flights
+src/etl/          ArduPilot SITL MAVLink log -> the same telemetry schema; sitl_rebuild
+sitl/             SITL missions, parameter files, wind sweep, recorded flights, RESULTS.md
 openclaw/         agent workspace instructions and skill
 tests/            pytest
 ```

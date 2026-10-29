@@ -177,6 +177,20 @@ def train(n_flights: int = 100, seed: int = 9000, n_calib: int = 100, calib_seed
     return bundle
 
 
+def load_or_train(path: Path = MODEL_PATH, n_flights: int = 100, n_calib: int = 100,
+                  retrain: bool = False) -> dict:
+    """The saved model if it is this code's version, else a newly trained one (saved to `path`)."""
+    bundle = None if retrain or not path.exists() else joblib.load(path)
+    if bundle is not None and bundle.get("version") != MODEL_VERSION:
+        log.info("model %s is version %s, code is %d: retraining", path, bundle.get("version", 2), MODEL_VERSION)
+        bundle = None
+    if bundle is None:
+        bundle = train(n_flights, n_calib=n_calib)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        joblib.dump(bundle, path)
+    return bundle
+
+
 def detect_mission(rows, bundle: dict, mode: str = DEFAULT_MODE, merge_gap_s: int = 15) -> list[Alert]:
     if mode not in MODES:
         raise ValueError(f"mode must be one of {MODES}")

@@ -105,6 +105,16 @@ def flight_drain_per_s(rows, lag_s: int = 60) -> float | None:
     return max(0.0, statistics.median(pairs)) if pairs else None
 
 
+def battery_check_points(rows, cfg: RuleConfig) -> list[int]:
+    """Row positions the battery rule compares at: both windows inside cruise (takeoff and
+    landing drain at another, VTOL, rate). Empty when the flight has under 2 x (window + gap)
+    seconds of cruise: then the battery rule has nothing to say, which is not the same as 'no fault'."""
+    w, g = cfg.battery_window_s, cfg.battery_gap_s
+    cruise = [r["flight_mode"] in CRUISE_MODES for r in rows]
+    return [i for i in range(w + g, len(rows) - g - w, cfg.battery_step_s)
+            if cruise[i - g - w] and cruise[i + g + w - 1] and cruise[i]]
+
+
 def _battery_flags(rows, cfg: RuleConfig) -> list[tuple[str, float]]:
     c = [r["battery_cruise_pct"] for r in rows]
     w, g = cfg.battery_window_s, cfg.battery_gap_s
@@ -112,12 +122,8 @@ def _battery_flags(rows, cfg: RuleConfig) -> list[tuple[str, float]]:
     if drain is None:
         return []
     expected = drain * (w + 2 * g)  # normal drain between the two window starts
-    cruise = [r["flight_mode"] in CRUISE_MODES for r in rows]
     flags = []
-    for i in range(w + g, len(c) - g - w, cfg.battery_step_s):
-        # both windows inside cruise: takeoff and landing drain at another (VTOL) rate
-        if not (cruise[i - g - w] and cruise[i + g + w - 1] and cruise[i]):
-            continue
+    for i in battery_check_points(rows, cfg):
         before = max(c[i - g - w:i - g])
         after = max(c[i + g:i + g + w])
         excess = (before - after) - expected

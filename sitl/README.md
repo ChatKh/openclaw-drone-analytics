@@ -7,18 +7,14 @@ schema, API and database as the simulator's data. Nothing downstream changes.
 | File | What |
 |---|---|
 | `survey.waypoints` + `mission_phases.json` | short mission: VTOL takeoff to 40 m, one survey loop, VTOL landing (~2.5 min armed) |
-| `survey_long.waypoints` + `survey_long.phases.json` | long mission: 8 survey lines of 1000 m, 200 m apart (~12 km, ~11 min armed). Long enough for the battery rule, which needs 2 x (180 + 60) s of data |
-| `survey_wind.waypoints` + `survey_wind.phases.json` | wind-sweep mission: 12 survey lines (~17.7 km). Cruise stays above the 480 s the battery rule needs even with a tailwind |
+| `survey_long.waypoints` + `survey_long.phases.json` | long mission: 8 survey lines of 1000 m, 200 m apart (~12 km, ~9 min armed) |
+| `survey_wind.waypoints` + `survey_wind.phases.json` | wind-sweep mission: 12 survey lines (~17.7 km). Cruise stays above the 480 s the battery rule needs |
 | `sitl.parm` | parameters on top of ArduPilot's quadplane defaults: the battery monitor on |
 | `wind/wind_*.parm` | wind sweep: calm, the top of each flyable band (4.9 / 7.9 / 12 m/s), and 13 m/s; layered after `sitl.parm` |
-| `flights/*.tlog` | recorded flights, kept in git; the tests run the ETL on them |
-
-| Flight | Mission | Mission id | Phase map |
-|---|---|---|---|
-| `flights/survey_short.tlog` | `survey.waypoints` | `D0001_S_AM` | `mission_phases.json` |
-| `flights/survey_long.tlog` | `survey_long.waypoints` | `D0002_S_AM` | `survey_long.phases.json` |
-| `flights/survey_wind_00.tlog`, `_4.9`, `_7.9`, `_12` | `survey_wind.waypoints` | `D0010_S_AM` ... `D0013_S_AM` | `survey_wind.phases.json` |
-| `flights/survey_wind_13.tlog` | `survey.waypoints` | `D0014_S_AM` | `mission_phases.json` |
+| `flights/*.tlog` | completed flights, kept in git; the tests run the ETL on each |
+| `flights/failed/*.tlog` | flights that did not complete (no lift-off, could not land): kept, they are results too |
+| `flights.json` | every flight: mission id, phase map, parameter file, wind, start heading, outcome |
+| `RESULTS.md` | the results table, generated from the logs by `python -m src.etl.sitl_rebuild` |
 
 ## Fly
 
@@ -52,16 +48,18 @@ transitions to forward flight, flies the survey, transitions back and lands. Aft
 
 ## Into the pipeline
 
-A separate database, so SITL flights do not change the simulator's dev-set results:
+Copy the log into `flights/` (or `flights/failed/` if the mission did not complete), add one entry
+to `flights.json`, then:
 
 ```bash
-cd ~/openclaw-drone-analytics
-cp ~/sitl-runs/flight3/mav.tlog sitl/flights/survey_long.tlog
-python -m src.etl.sitl_tlog --tlog sitl/flights/survey_long.tlog --mission-id D0002_S_AM \
-    --phases sitl/survey_long.phases.json --out data/sitl_long --load --db data/sitl.db
-DRONE_DB_PATH=data/sitl.db python -m src.analytics.rule_detector
-DRONE_DB_PATH=data/sitl.db python -m src.analytics.ml_detector detect
+python -m src.etl.sitl_rebuild
 ```
+
+It deletes and rebuilds `data/sitl.db` from every flight in `flights.json` (completed ones only),
+runs both detectors, writes `data/sitl/<flight>/` (CSV files and `flight_summary.json`) and
+regenerates `RESULTS.md`. Running it again gives the same result, so a mistake in between, such as
+an old command that deleted the database, is fixed by running it once more. A separate database
+keeps SITL flights out of the simulator's dev-set results.
 
 These flights have no planted fault, so every alert is a false alarm: a direct measure of how well
 thresholds tuned on the simulator carry over to the real flight-control code.
@@ -113,6 +111,57 @@ changed the code or the setup, and has a test.
 | short (158 s armed) | 0 | 0 (battery rule not run) | 1, then 0 after finding 2 | 0 |
 | long (532 s armed) | 1 battery | 0 (battery rule not run) | 8 sensor | 0 |
 
+Findings from the wind sweep (all numbers in [`RESULTS.md`](RESULTS.md); one flight per speed, so
+each is a direction, not a calibration). These were **not** fixed: the detectors stay v3, and any
+change would be v4 with its own new test set.
+
+6. **A QuadPlane must take off facing the wind.** At 7.9 m/s with SITL's default start heading
+   (353 deg, wind from 180 deg, so from behind) it never got above 0.3 m in 11 minutes at full lift
+   throttle: a "Potential VTOL Thrust Loss" emergency at 18.6 s, 64 % of the battery gone. With one
+   change, the start heading set to face the wind, the same settings flew the whole mission. Why the
+   tail wind holds it down (airflow over the wing from behind) is our reading, not measured.
+7. **Altitude takes 30-50 s to settle after the transition in wind.** At 7.9 m/s the first three
+   windows after "Transition done" wobbled more than any simulated flight (`alt_std` 2.9 m against
+   2.18, `alt_max_dev` 7.6 m against 5.9): the ML detector's one false alarm on that flight.
+8. **Ground speed carries the wind.** At 12 m/s ground speed swings with heading (tailwind and
+   headwind legs between crosswind survey lines): `speed_std` up to 8.2 against 4.2 in normal
+   simulated flights, in 31 of 78 windows, as 12 ML 'sensor' false alarms about 50 s apart, one per
+   survey line. The simulator models wind as noise around a constant speed, never tied to heading.
+   Airspeed (`VFR_HUD.airspeed`) would separate wind from faults; not in the schema yet.
+9. **ArduPilot's wind estimate is accurate but smooth, and reads high in strong wind.** Median 4.9
+   and 7.9 m/s for 4.9 and 7.9 set; 12.4 and 13.4 for 12 and 13, with gusts of 30 % barely visible
+   (maximum at most 0.3 above the median). A 'return above 12 m/s' trigger on its 30 s mean would
+   have fired 55 s into the 12 m/s flight, the top of a band the drone should still fly, and 29 s
+   into the 13 m/s one. A trigger needs a margin for the estimate, or separate warn and return levels.
+10. **Landing gets harder with wind.** Touchdown 0.50 / 0.46 / 0.67 / 1.93 m/s at 0 / 4.9 / 7.9 / 12
+    m/s; the landing took 61 / 68 / 71 / 203 s; during the back-transition the aircraft climbed to
+    45 / 55 / 62 / 59 m from a 40 m mission. At 12 and 13 m/s ArduPilot switched EKF lanes ("EKF3 lane
+    switch"), a sign its estimator was working hard.
+11. **At 13 m/s the vertical landing never got down.** 23 minutes of "Land descend", climbing slowly
+    to 172 m, 18 % of the battery used in 25 minutes armed (the 7.9 m/s no-lift-off flight used 64 %
+    in 11). Little battery and a climb point to the wing lifting the aircraft while it hovers into a
+    13 m/s wind; that explanation is ours, not measured. If the policy above 12 m/s is to land at
+    once, a vertical landing may not be available.
+
+| Wind | Flight | Rules v3 alerts | ML v3 alerts | Battery-rule checks |
+|---|---|---|---|---|
+| 0 | completed | 0 | 0 | 35 |
+| 4.9 | completed | 0 | 0 | 40 |
+| 7.9 | completed (facing the wind) | 0 | 1 | 48 |
+| 12 | completed | 0 | 12 | 65 |
+
+The rules raised nothing from calm to 12 m/s with the battery rule actually checking; the ML
+envelope knows only the weather it was trained on, and at the top of the flyable range that is
+not enough.
+
+### What the wind model does not cover
+
+- SITL applies the same turbulence to the vertical axis as to the horizontal (`SIM_Aircraft::update_wind`),
+  so 30 % gusts are 30 % vertical gusts too; real vertical gusts are usually weaker.
+- `SIM_WIND_T 1` puts full wind speed at ground level; real wind is weaker near the ground.
+- The airframe is SITL's generic QuadPlane, not the planned X8, and nothing models structural damage:
+  touchdown speed is the closest measure of "landing without damage".
+
 ## Wind sweep
 
 The drone's operating bands: 0 to below 5 m/s flies for sure, 5 to below 8 needs a skilled pilot,
@@ -144,23 +193,23 @@ behave, not whether the real drone survives the wind.
 W=7.9   # 00, 4.9, 7.9, 12, 13
 mkdir -p ~/sitl-runs/wind_$W && cd ~/sitl-runs/wind_$W
 ~/ardupilot/Tools/autotest/sim_vehicle.py -v ArduPlane -f quadplane --console --map -w \
+    -l -35.363261,149.165230,584,180 \
     --add-param-file=/home/dev/openclaw-drone-analytics/sitl/sitl.parm \
     --add-param-file=/home/dev/openclaw-drone-analytics/sitl/wind/wind_$W.parm
 ```
 
+`-l ...,180` starts the aircraft facing the wind (finding 6). The 0 and 4.9 m/s flights were flown
+before that finding, at the default heading; both completed.
+
 In MAVProxy: `param show SIM_WIND_SPD` (must match), `wp load .../sitl/survey_wind.waypoints`
 (13 m/s: `survey.waypoints`), `wp list` (28 items; 8 for the short one), `mode AUTO`, `arm throttle`.
-Then, in the project:
-
-```bash
-W=7.9; M=D0012_S_AM; P=sitl/survey_wind.phases.json   # ids in the table; 13 m/s: P=sitl/mission_phases.json
-cp ~/sitl-runs/wind_$W/mav.tlog sitl/flights/survey_wind_$W.tlog
-python -m src.etl.sitl_tlog --tlog sitl/flights/survey_wind_$W.tlog --mission-id $M \
-    --phases $P --out data/sitl_wind_$W --load --db data/sitl.db
-```
+Wait for `Land complete` and `Throttle disarmed` before Ctrl+C: `Land descend started` is only the
+start of the descent. Then copy `mav.tlog` into `flights/` as `survey_wind_$W.tlog`, add it to
+`flights.json` and run `python -m src.etl.sitl_rebuild`.
 
 The ETL also writes `flight_summary.json`: touchdown speed (SITL's "SIM Hit ground" message), how
 far from take-off it landed, battery used, any warning ArduPilot raised, and ArduPilot's wind estimate
 (`WIND` message) from forward flight on: median, maximum, seconds above 12 m/s, and when its 30 s
 mean first passed 12 m/s, which is what a return trigger that ignores single gusts would have seen.
-On the calm flights the estimate stayed at 0.1-0.2 m/s.
+On the calm flights the estimate stayed at 0.1-0.2 m/s. Before forward flight there is no estimate
+(ArduPilot reads 0 on the ground), so a flight that never transitioned shows none.
